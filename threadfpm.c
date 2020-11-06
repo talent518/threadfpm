@@ -285,7 +285,7 @@ struct pthread_fake {
 };
 
 #define pthread_tid ((struct pthread_fake*) pthread_self())->tid
-#define pthread_pid ((struct pthread_fake*) pthread_self())->pid
+#define pthread_pid getpid() // ((struct pthread_fake*) pthread_self())->pid
 
 #ifdef THREADFPM_DEBUG
 #	define OPENLOG() openlog("threadfpm", LOG_PID, LOG_USER);SYSLOG(" OPEN")
@@ -1552,6 +1552,9 @@ static sem_t sem;
 static void *thread_request(void *request) {
 	char *primary_script = NULL;
 	zend_file_handle file_handle;
+	char pidstr[20], tidstr[20];
+	size_t pidlen = snprintf(pidstr, sizeof(pidstr), "Pid: %d", pthread_pid);
+	size_t tidlen = snprintf(tidstr, sizeof(tidstr), "Tid: %d", pthread_tid);
 
 	ts_resource(0);
 
@@ -1598,6 +1601,11 @@ loop:
 	}
 
 	SYSLOG(" SCRIPT: %s", primary_script);
+	
+	if(PG(expose_php)) {
+		sapi_add_header(pidstr, pidlen, 1);
+		sapi_add_header(tidstr, tidlen, 1);
+	}
 
 	zend_first_try {
 		zend_stream_init_filename(&file_handle, primary_script);
