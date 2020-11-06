@@ -185,6 +185,7 @@ typedef struct _php_cgi_globals_struct {
 	zend_bool fcgi_logging;
 	zend_bool is_lock;
 	int body_fd;
+	unsigned long int response_length;
 	char *redirect_status_env;
 	HashTable user_config_cache;
 	char *error_header;
@@ -297,7 +298,7 @@ struct pthread_fake {
 #else
 #	define OPENLOG() openlog("threadfpm", LOG_PID, LOG_USER);SYSLOGE(" OPEN")
 #	define SYSLOG(fmt, args...)
-#	define SYSLOGE(fmt, args...) syslog(LOG_DEBUG, "%s:%d in %s" fmt, __FILE__, __LINE__, __func__, ##args)
+#	define SYSLOGE(fmt, args...) syslog(LOG_DEBUG, "%d %s" fmt, pthread_tid, __func__, ##args)
 #	define SYSLOGG(...)
 #	define CLOSELOG() SYSLOGE(" CLOSE");closelog()
 #	define dprintf(args...)
@@ -343,6 +344,8 @@ static size_t sapi_cgibin_ub_write(const char *str, size_t str_length) /* {{{ */
 	const char *ptr = str;
 	uint32_t remaining = str_length;
 	size_t ret;
+
+	CGIG(response_length) += str_length;
 
 	SYSLOGG(" => %p %ld", str, str_length);
 
@@ -1447,6 +1450,7 @@ static void php_cgi_globals_ctor(php_cgi_globals_struct *php_cgi_globals)
 	php_cgi_globals->error_header = NULL;
 	php_cgi_globals->is_lock = 0;
 	php_cgi_globals->body_fd = -1;
+	php_cgi_globals->response_length = 0;
 }
 /* }}} */
 
@@ -1546,15 +1550,29 @@ static zend_module_entry cgi_module_entry = {
 	STANDARD_MODULE_PROPERTIES
 };
 
+#define MICRO_IN_SEC 1000000.00
+
+double microtime() {
+	struct timeval tp = {0};
+
+	if (gettimeofday(&tp, NULL)) {
+		return 0;
+	}
+
+	return (double)(tp.tv_sec + tp.tv_usec / MICRO_IN_SEC) * 1000;
+}
+
 static int fcgi_fd = 0;
 static pthread_mutex_t lock;
 static sem_t sem;
 static void *thread_request(void *request) {
 	char *primary_script = NULL;
 	zend_file_handle file_handle;
+	char reqinfo[4096];
 	char pidstr[20], tidstr[20];
 	size_t pidlen = snprintf(pidstr, sizeof(pidstr), "Pid: %d", pthread_pid);
 	size_t tidlen = snprintf(tidstr, sizeof(tidstr), "Tid: %d", pthread_tid);
+	double t;
 
 	ts_resource(0);
 
@@ -1563,7 +1581,9 @@ static void *thread_request(void *request) {
 	dprintf("%d thread begin\n", pthread_tid);
 
 loop:
+	t = microtime();
 	CGIG(body_fd) = -1;
+	CGIG(response_length) = 0;
 	init_request_info();
 
 	/* request startup only after we've done all we can to
@@ -1599,8 +1619,8 @@ loop:
 			primary_script = estrdup(SG(request_info).path_translated);
 		}
 	}
-
-	SYSLOG(" SCRIPT: %s", primary_script);
+	
+	snprintf(reqinfo, sizeof(reqinfo), "[%s] %s %s %s %ld", FCGI_GETENV(request, "SERVER_NAME"), FCGI_GETENV(request, "REMOTE_ADDR"), SG(request_info).request_method, FCGI_GETENV(request, "REQUEST_URI"), SG(request_info).content_length);
 	
 	if(PG(expose_php)) {
 		sapi_add_header(pidstr, pidlen, 1);
@@ -1636,6 +1656,8 @@ fastcgi_request_done:
 	SG(request_info).path_translated = NULL;
 
 	php_request_shutdown((void *) 0);
+	
+	SYSLOGE(" %s %lu %.3fms", reqinfo, CGIG(response_length), microtime() - t);
 
 	zend_first_try {
 		SG(server_context) = request;
