@@ -1715,38 +1715,28 @@ static void on_accept() {
 			return;
 		}
 
-		struct timespec tp;
-		clock_gettime(CLOCK_REALTIME, &tp);
+		struct timeval tv = {0, 0};
+		fd_set set;
+		int ret;
+		
 		if(pthread_self() == mthread) {
-			tp.tv_nsec += 100000; // 100ms
+			tv.tv_usec = 100000; // 100ms
 		} else {
-			tp.tv_sec += 5; // 5s
+			tv.tv_sec = 5; // 5s
 		}
-		if(pthread_mutex_timedlock(&lock, &tp)) {
-			zend_bailout();
+
+	try:
+		FD_ZERO(&set);
+		FD_SET(fcgi_fd, &set);
+
+		errno = 0;
+		ret = select(fcgi_fd + 1, &set, NULL, NULL, &tv);
+		dprintf("%d ret = %d\n", pthread_tid, ret);
+		if (ret > 0 && FD_ISSET(fcgi_fd, &set)) {
+			if(!pthread_mutex_trylock(&lock)) CGIG(is_lock) = 1;
+			else goto try;
 		} else {
-			struct timeval tv = {0, 0};
-			fd_set set;
-			int ret;
-			
-			if(pthread_self() == mthread) {
-				tv.tv_usec = 100000; // 100ms
-			} else {
-				tv.tv_sec = 5; // 5s
-			}
-
-			FD_ZERO(&set);
-			FD_SET(fcgi_fd, &set);
-
-			errno = 0;
-			ret = select(fcgi_fd + 1, &set, NULL, NULL, &tv);
-			dprintf("%d ret = %d\n", pthread_tid, ret);
-			if (ret > 0 && FD_ISSET(fcgi_fd, &set)) {
-				CGIG(is_lock) = 1;
-			} else {
-				pthread_mutex_unlock(&lock);
-				zend_bailout();
-			}
+			zend_bailout();
 		}
 	} else {
 		dprintf("%d %s\n", pthread_tid, __func__);
