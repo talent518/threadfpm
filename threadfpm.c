@@ -1661,7 +1661,11 @@ fastcgi_request_done:
 
 	zend_first_try {
 		SG(server_context) = request;
-		if(fcgi_accept_request(request) >= 0) goto loop;
+		t = microtime();
+		if(fcgi_accept_request(request) >= 0) {
+			dprintf("tid: %d %.3f\n", pthread_tid, microtime() - t);
+			goto loop;
+		}
 	} zend_end_try();
 
 err:
