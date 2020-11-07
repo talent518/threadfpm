@@ -1576,7 +1576,7 @@ void thread_sigmask() {
 }
 
 static int fcgi_fd = 0;
-static unsigned int nthreads = 0;
+static unsigned int nthreads = 0, wthreads = 0;
 static pthread_mutex_t lock;
 static pthread_cond_t cond;
 static pthread_t mthread;
@@ -1706,7 +1706,10 @@ err:
 
 static void on_accept() {
 	void *request = SG(server_context);
-
+	struct timeval tv;
+	fd_set set;
+	int ret;
+		
 	if(request) {
 		dprintf("%d %s %p %d\n", pthread_tid, __func__, request, fcgi_is_closed(request));
 		
@@ -1715,17 +1718,14 @@ static void on_accept() {
 			return;
 		}
 
-		struct timeval tv = {0, 0};
-		fd_set set;
-		int ret;
-		
+	try:
 		if(pthread_self() == mthread) {
-			tv.tv_usec = 100000; // 100ms
+			tv.tv_sec = 1; // 1s
 		} else {
 			tv.tv_sec = 5; // 5s
 		}
+		tv.tv_usec = 0;
 
-	try:
 		FD_ZERO(&set);
 		FD_SET(fcgi_fd, &set);
 
@@ -1733,8 +1733,19 @@ static void on_accept() {
 		ret = select(fcgi_fd + 1, &set, NULL, NULL, &tv);
 		dprintf("%d ret = %d\n", pthread_tid, ret);
 		if (ret > 0 && FD_ISSET(fcgi_fd, &set)) {
-			if(!pthread_mutex_trylock(&lock)) CGIG(is_lock) = 1;
-			else goto try;
+			pthread_mutex_lock(&lock);
+			if(wthreads == 0) {
+				CGIG(is_lock) = 1;
+				wthreads = 1;
+				pthread_mutex_unlock(&lock);
+			} else {
+				wthreads++;
+				pthread_cond_wait(&cond, &lock);
+				wthreads--;
+				if(wthreads > 0) pthread_cond_signal(&cond);
+				pthread_mutex_unlock(&lock);
+				goto try;
+			}
 		} else {
 			zend_bailout();
 		}
@@ -1748,6 +1759,9 @@ static void on_read() {
 
 	if(CGIG(is_lock)) {
 		CGIG(is_lock) = 0;
+		pthread_mutex_lock(&lock);
+		wthreads--;
+		pthread_cond_signal(&cond);
 		pthread_mutex_unlock(&lock);
 	}
 }
@@ -2069,15 +2083,15 @@ consult the installation file that came with this distribution, or visit \n\
 			}
 		} zend_catch {
 			timeout.tv_sec = 0;
-			timeout.tv_nsec = 10000; // 10ms
+			timeout.tv_nsec = 10000; // 10us
 			sigprocmask(SIG_BLOCK, &waitset, NULL);
+			dprintf("sigtimedwait\n");
 			if(sigtimedwait(&waitset, &waitinfo, &timeout) <= 0) {
 				sem_post(&sem);
-				continue;
 			} else {
 				signal_handler(waitinfo.si_signo);
-				continue;
 			}
+			continue;
 		} zend_end_try();
 		
 		pthread_mutex_lock(&lock);
