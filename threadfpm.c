@@ -1562,8 +1562,24 @@ double microtime() {
 	return (double)(tp.tv_sec + tp.tv_usec / MICRO_IN_SEC) * 1000;
 }
 
+void thread_sigmask() {
+	register int sig;
+	sigset_t set;
+
+	sigemptyset(&set);
+
+	for(sig=SIGHUP; sig<=SIGSYS; sig++) {
+		sigaddset(&set, sig);
+	}
+
+	pthread_sigmask(SIG_SETMASK, &set, NULL);
+}
+
 static int fcgi_fd = 0;
+static unsigned int nthreads = 0;
 static pthread_mutex_t lock;
+static pthread_cond_t cond;
+static pthread_t mthread;
 static sem_t sem;
 static void *thread_request(void *request) {
 	char *primary_script = NULL;
@@ -1573,6 +1589,8 @@ static void *thread_request(void *request) {
 	size_t pidlen = snprintf(pidstr, sizeof(pidstr), "Pid: %d", pthread_pid);
 	size_t tidlen = snprintf(tidstr, sizeof(tidstr), "Tid: %d", pthread_tid);
 	double t;
+
+	thread_sigmask();
 
 	ts_resource(0);
 
@@ -1676,6 +1694,11 @@ err:
 
 	dprintf("%d thread end\n", pthread_tid);
 
+	pthread_mutex_lock(&lock);
+	nthreads--;
+	pthread_cond_signal(&cond);
+	pthread_mutex_unlock(&lock);
+
 	sem_post(&sem);
 
 	pthread_exit(NULL);
@@ -1686,16 +1709,31 @@ static void on_accept() {
 
 	if(request) {
 		dprintf("%d %s %p %d\n", pthread_tid, __func__, request, fcgi_is_closed(request));
+		
+		if(fcgi_fd <= 0) {
+			zend_bailout();
+			return;
+		}
 
 		struct timespec tp;
 		clock_gettime(CLOCK_REALTIME, &tp);
-		tp.tv_sec += 5;
+		if(pthread_self() == mthread) {
+			tp.tv_nsec += 100000; // 100ms
+		} else {
+			tp.tv_sec += 5; // 5s
+		}
 		if(pthread_mutex_timedlock(&lock, &tp)) {
 			zend_bailout();
 		} else {
-			struct timeval tv = {5,0};
+			struct timeval tv = {0, 0};
 			fd_set set;
 			int ret;
+			
+			if(pthread_self() == mthread) {
+				tv.tv_usec = 100000; // 100ms
+			} else {
+				tv.tv_sec = 5; // 5s
+			}
 
 			FD_ZERO(&set);
 			FD_SET(fcgi_fd, &set);
@@ -1726,6 +1764,15 @@ static void on_read() {
 
 static void on_close() {
 	dprintf("%d %s\n", pthread_tid, __func__);
+}
+
+static zend_long isReload = 0, isRun = 1;
+static void signal_handler(int sig) {
+	dprintf("sig = %d\n", sig);
+	
+	isRun = 0;
+	
+	if(!isReload) isReload = (sig == SIGUSR1 || sig == SIGUSR2);
 }
 
 /* {{{ main
@@ -1997,24 +2044,54 @@ consult the installation file that came with this distribution, or visit \n\
 	php_import_environment_variables = cgi_php_import_environment_variables;
 
 	pthread_mutex_init(&lock, NULL);
+	pthread_cond_init(&cond, NULL);
 	sem_init(&sem, 0, max_threads);
 
 	/* library is already initialized, now init our request */
 	request = fcgi_init_request(fcgi_fd, on_accept, on_read, on_close);
 
+	thread_sigmask();
+
+	sigset_t waitset;
+	siginfo_t waitinfo;
+	struct timespec timeout;
+	
+	sigemptyset(&waitset);
+	sigaddset(&waitset, SIGINT);
+	sigaddset(&waitset, SIGTERM);
+	sigaddset(&waitset, SIGUSR1);
+	sigaddset(&waitset, SIGUSR2);
+
+	mthread = pthread_self();
+
 	OPENLOG();
-	while (1) {
+	while (isRun) {
+		SG(server_context) = request;
+		
 		dprintf("sem wait begin\n");
 		sem_wait(&sem);
 		dprintf("sem wait end\n");
 
+		zend_first_try {
+			if(fcgi_accept_request(request) < 0) {
+				sem_post(&sem);
+				continue;
+			}
+		} zend_catch {
+			timeout.tv_sec = 0;
+			timeout.tv_nsec = 10000; // 10ms
+			sigprocmask(SIG_BLOCK, &waitset, NULL);
+			if(sigtimedwait(&waitset, &waitinfo, &timeout) <= 0) {
+				sem_post(&sem);
+				continue;
+			} else {
+				signal_handler(waitinfo.si_signo);
+				continue;
+			}
+		} zend_end_try();
+		
 		pthread_mutex_lock(&lock);
-		SG(server_context) = NULL;
-		if(fcgi_accept_request(request) < 0) {
-			pthread_mutex_unlock(&lock);
-			sem_post(&sem);
-			continue;
-		}
+		nthreads++;
 		pthread_mutex_unlock(&lock);
 
 		pthread_attr_init(&attr);
@@ -2024,11 +2101,24 @@ consult the installation file that came with this distribution, or visit \n\
 
 		if(ret != 0) {
 			perror("pthread_create() is error");
+			
+			pthread_mutex_lock(&lock);
+			nthreads--;
+			pthread_mutex_unlock(&lock);
+
 			break;
 		}
 
 		request = fcgi_init_request(fcgi_fd, on_accept, on_read, on_close);
 	}
+
+	close(fcgi_fd);
+	fcgi_fd = -1;
+	
+	pthread_mutex_lock(&lock);
+	while(nthreads > 0) pthread_cond_wait(&cond, &lock);
+	pthread_mutex_unlock(&lock);
+
 	CLOSELOG();
 	fcgi_destroy_request(request);
 	fcgi_shutdown();
@@ -2041,7 +2131,15 @@ consult the installation file that came with this distribution, or visit \n\
 	}
 
 	sem_destroy(&sem);
+	pthread_cond_destroy(&cond);
 	pthread_mutex_destroy(&lock);
+
+	if(isReload) {
+		char **args = (char**) malloc(sizeof(char*)*(argc+1));
+		memcpy(args, argv, sizeof(char*)*argc);
+		args[argc] = NULL;
+		execv(argv[0], args);
+	}
 
 out:
 
