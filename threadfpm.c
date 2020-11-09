@@ -172,6 +172,7 @@ static const opt_struct OPTIONS[] = {
 	{'v', 0, "version"},
 	{'t', 1, "threads"},
 	{'I', 1, "idle-seconds"},
+	{'r', 1, "max-requests"},
 	{'p', 1, "path"},
 	{'b', 1, "backlog"},
 	{'-', 0, NULL} /* end of args */
@@ -955,20 +956,21 @@ static void php_cgi_usage(char *argv0)
 		prog = "php";
 	}
 
-	php_printf(	"Usage: %s [-n] [-e] [-h] [-i] [-m] [-v] [-t <threads>] [-I <idleseconds>] [-p <path>|<host:port>] [-b backlog]\n"
-				"  -c <path>|<file> Look for php.ini file in this directory\n"
-				"  -n               No php.ini file will be used\n"
-				"  -d foo[=bar]     Define INI entry foo with value 'bar'\n"
-				"  -e               Generate extended information for debugger/profiler\n"
-				"  -h               This help\n"
-				"  -i               PHP information\n"
-				"  -m               Show compiled in modules\n"
-				"  -v               Version number\n"
-	         	"  -t <threads>     Max threads\n"
-	         	"  -I <idleseconds> Idle seconds for kill thread\n"
-				"  -p <path>        listen for unix socket\n"
-				"  -p <host:port>   listen for tcp"
-				"  -b backlog       Version number\n",
+	php_printf(	"Usage: %s [-n] [-e] [-h] [-i] [-m] [-v] [-t <threads>] [-I <idleseconds>] [-r <max requests>] [-p <path>|<host:port>] [-b backlog]\n"
+				"  -c <path>|<file>  Look for php.ini file in this directory\n"
+				"  -n                No php.ini file will be used\n"
+				"  -d foo[=bar]      Define INI entry foo with value 'bar'\n"
+				"  -e                Generate extended information for debugger/profiler\n"
+				"  -h                This help\n"
+				"  -i                PHP information\n"
+				"  -m                Show compiled in modules\n"
+				"  -v                Version number\n"
+	         	"  -t <threads>      Max threads\n"
+	         	"  -I <idleseconds>  Automatically kill threads with space idleseconds seconds.\n"
+	         	"  -r <max requests> Automatically restart the program when it is idle and exceeds the maximum number of requests\n"
+				"  -p <path>         Listen for unix socket\n"
+				"  -p <host:port>    Listen for tcp"
+				"  -b backlog        Version number\n",
 				prog);
 }
 /* }}} */
@@ -1602,8 +1604,6 @@ typedef struct _thread_arg_t {
 	struct _thread_arg_t *next;
 } thread_arg_t;
 
-static unsigned long int argid = 0;
-
 static int fcgi_fd = 0;
 static unsigned int nthreads = 0;
 static pthread_mutex_t lock;
@@ -1822,6 +1822,8 @@ int main(int argc, char *argv[])
 	const char *path = "127.0.0.1:9000";
 	int backlog = 256;
 	int max_threads = 64;
+	unsigned long int argid = 0;
+	unsigned long int max_requests = 10000000;
 
 	int ret;
 	pthread_t thread;
@@ -1941,6 +1943,13 @@ int main(int argc, char *argv[])
 				idleseconds = atoi(php_optarg);
 				if(idleseconds < 1) {
 					idleseconds = 1;
+				}
+				break;
+				
+			case 'r':
+				max_requests = atoi(php_optarg);
+				if(max_requests < 1) {
+					max_requests = 1;
 				}
 				break;
 
@@ -2156,6 +2165,10 @@ consult the installation file that came with this distribution, or visit \n\
 			if(threads > 0 && microtime() - t >= idleseconds * 1000) {
 				t = microtime();
 				for(ret=requests; ret<threads; ret++) sem_post(&rsem);
+			}
+			if(threads == 0 && argid > max_requests) {
+				isRun = 0;
+				isReload = 1;
 			}
 			continue;
 		}
