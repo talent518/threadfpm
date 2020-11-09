@@ -1,5 +1,5 @@
 # threadfpm
-php多线程fastcgi的sapi扩展。
+php多线程fastcgi的sapi扩展，优点是占用内存少且稳定，避免出现502错误。
 
 ### 编译
 * 放到php源码目录的sapi目录下
