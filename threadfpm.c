@@ -175,6 +175,10 @@ static const opt_struct OPTIONS[] = {
 	{'r', 1, "max-requests"},
 	{'p', 1, "path"},
 	{'b', 1, "backlog"},
+#ifdef THREADFPM_DEBUG
+	{'D', 0, "debug"},
+#endif
+	{'A', 0, "access"},
 	{'-', 0, NULL} /* end of args */
 };
 
@@ -310,26 +314,15 @@ struct pthread_fake {
 #define pthread_pid getpid() // ((struct pthread_fake*) pthread_self())->pid
 
 #ifdef THREADFPM_DEBUG
-#	define OPENLOG() openlog("threadfpm", LOG_PID, LOG_USER);SYSLOG(" OPEN")
-#	define SYSLOG(fmt, args...) syslog(LOG_DEBUG, "%s:%d in %s " fmt, __FILE__, __LINE__, __func__, ##args)
-#	define SYSLOGE(args...) SYSLOG(args)
-#	define SYSLOGG(fmt, args...) SYSLOG(fmt, ##args)
-#	define CLOSELOG() SYSLOG(" CLOSE");closelog()
+#	define dprintf(fmt, args...) if(UNEXPECTED(isDebug)) {fprintf(stderr, "[%s] %d " fmt, gettimeofstr(), pthread_tid, ##args);fflush(stderr);}
+	static zend_bool isDebug = 0;
 #else
-#	define OPENLOG()
-#	define SYSLOG(...)
-#	define SYSLOGE(...)
-#	define SYSLOGG(...)
-#	define CLOSELOG()
+#	define dprintf(...)
 #endif
-
-#define dprintf(fmt, args...) printf("[%s] " fmt, gettimeofstr(), ##args)
 
 static inline size_t sapi_cgibin_single_write(const char *str, uint32_t str_length) /* {{{ */
 {
 	ssize_t ret;
-
-	SYSLOGG(" => %p %u", str, str_length);
 
 	/* sapi has started which means everyhting must be send through fcgi */
 	if (fpm_is_running) {
@@ -338,14 +331,11 @@ static inline size_t sapi_cgibin_single_write(const char *str, uint32_t str_leng
 
 		ret = fcgi_write(request, FCGI_STDOUT, str, str_length);
 		if (ret <= 0) {
-			SYSLOGG(" ERROR");
 			return 0;
 		}
-		SYSLOGG("");
+
 		return (size_t)ret;
 	}
-
-	SYSLOGG("");
 
 	/* sapi has not started, output to stdout instead of fcgi */
 #ifdef PHP_WRITE_STDOUT
@@ -368,36 +358,9 @@ static size_t sapi_cgibin_ub_write(const char *str, size_t str_length) /* {{{ */
 
 	CGIG(response_length) += str_length;
 
-	SYSLOGG(" => %p %ld", str, str_length);
-
-	#ifdef THREADFPM_DEBUG
-		if(str && str_length) {
-			int size = MIN(str_length, 4*1024);
-			char *str2 = estrndup(str, size);
-
-			loop:
-			SYSLOG(" => %u: %s", size, str2);
-			remaining -= size;
-			ptr += size;
-			if(remaining > 0) {
-				if(remaining < size) {
-					size = remaining;
-				}
-				memcpy(str2, ptr, size);
-				str2[size] = '\0';
-				goto loop;
-			}
-			efree(str2);
-
-			ptr = str;
-			remaining = str_length;
-		}
-	#endif
-
 	while (remaining > 0) {
 		ret = sapi_cgibin_single_write(ptr, remaining);
 		if (!ret) {
-			SYSLOGG("");
 			php_handle_aborted_connection();
 			return str_length - remaining;
 		}
@@ -405,23 +368,18 @@ static size_t sapi_cgibin_ub_write(const char *str, size_t str_length) /* {{{ */
 		remaining -= ret;
 	}
 
-	SYSLOGG("");
-
 	return str_length;
 }
 /* }}} */
 
 static void sapi_cgibin_flush(void *server_context) /* {{{ */
 {
-	SYSLOGG(" FLUSH");
-
 	/* fpm has started, let use fcgi instead of stdout */
 	if (fpm_is_running) {
 		fcgi_request *request = (fcgi_request*) server_context;
 		if (!parent && request && !fcgi_flush(request, 0)) {
 			php_handle_aborted_connection();
 		}
-		SYSLOGG("");
 		return;
 	}
 
@@ -429,7 +387,6 @@ static void sapi_cgibin_flush(void *server_context) /* {{{ */
 	if (fflush(stdout) == EOF) {
 		php_handle_aborted_connection();
 	}
-	SYSLOGG("");
 }
 /* }}} */
 
@@ -561,7 +518,7 @@ static size_t sapi_cgi_read_post(char *buffer, size_t count_bytes) /* {{{ */
 	int tmp_read_bytes;
 	size_t remaining = SG(request_info).content_length - SG(read_post_bytes);
 
-	dprintf("%d read_post %lu\n", pthread_tid, remaining);
+	dprintf("read_post %lu\n", remaining);
 
 	if (remaining < count_bytes) {
 		count_bytes = remaining;
@@ -595,15 +552,6 @@ static size_t sapi_cgi_read_post(char *buffer, size_t count_bytes) /* {{{ */
 		}
 		read_bytes += tmp_read_bytes;
 	}
-
-	SYSLOGG(" => %p %u", buffer, read_bytes);
-	#ifdef THREADFPM_DEBUG
-		if(read_bytes) {
-			char *str2 = estrndup(buffer, read_bytes);
-			SYSLOG(" => %u: %s", read_bytes, str2);
-			efree(str2);
-		}
-	#endif
 
 	return read_bytes;
 }
@@ -956,7 +904,11 @@ static void php_cgi_usage(char *argv0)
 		prog = "php";
 	}
 
-	php_printf(	"Usage: %s [-n] [-e] [-h] [-i] [-m] [-v] [-t <threads>] [-I <idleseconds>] [-r <max requests>] [-p <path>|<host:port>] [-b backlog]\n"
+	php_printf(	"Usage: %s [-n] [-e] [-h] [-i] [-m] [-v] [-t <threads>] [-I <idleseconds>] [-r <max requests>] [-p <path>|<host:port>] [-b backlog]"
+			#ifdef THREADFPM_DEBUG
+				" [-D]"
+			#endif
+				" [-A]\n"
 				"  -c <path>|<file>  Look for php.ini file in this directory\n"
 				"  -n                No php.ini file will be used\n"
 				"  -d foo[=bar]      Define INI entry foo with value 'bar'\n"
@@ -970,8 +922,12 @@ static void php_cgi_usage(char *argv0)
 	         	"  -r <max requests> Automatically restart the program when it is idle and exceeds the maximum number of requests\n"
 				"  -p <path>         Listen for unix socket\n"
 				"  -p <host:port>    Listen for tcp"
-				"  -b backlog        Version number\n",
-				prog);
+				"  -b backlog        The backlog argument defines the maximum length to which the queue of pending connections for sockfd may grow.\n"
+			#ifdef THREADFPM_DEBUG
+				"  -D                Debug info\n"
+			#endif
+				"  -A                Access info\n"
+				, prog);
 }
 /* }}} */
 
@@ -1613,7 +1569,8 @@ static pthread_t mthread;
 static unsigned int nrequests = 0;
 static thread_arg_t *head_request = NULL, *tail_request = NULL;
 static zend_bool isRun = 1;
-static zend_long isReload = 0;
+static zend_bool isReload = 0;
+static zend_bool isAccess = 0;
 
 static void *thread_request(void*_) {
 	thread_arg_t *arg;
@@ -1631,7 +1588,7 @@ static void *thread_request(void*_) {
 
 	ts_resource(0);
 
-	dprintf("%d thread begin\n", pthread_tid);
+	dprintf("thread begin\n");
 
 	while(1) {
 		sem_wait(&rsem);
@@ -1654,7 +1611,7 @@ static void *thread_request(void*_) {
 
 		SG(server_context) = arg->request;
 
-		dprintf("%d running request %lu\n", pthread_tid, arg->id);
+		dprintf("running request %lu\n", arg->id);
 		
 		t = microtime();
 		CGIG(body_fd) = -1;
@@ -1695,7 +1652,14 @@ static void *thread_request(void*_) {
 			}
 		}
 		
-		snprintf(reqinfo, sizeof(reqinfo), "[%s] %s %s %s %ld", FCGI_GETENV(arg->request, "SERVER_NAME"), FCGI_GETENV(arg->request, "REMOTE_ADDR"), SG(request_info).request_method, FCGI_GETENV(arg->request, "REQUEST_URI"), SG(request_info).content_length);
+	#ifndef THREADFPM_DEBUG
+		if(UNEXPECTED(isAccess)) {
+	#endif
+			snprintf(reqinfo, sizeof(reqinfo), "[%s] %s %s %s %ld", FCGI_GETENV(arg->request, "SERVER_NAME"), FCGI_GETENV(arg->request, "REMOTE_ADDR"), SG(request_info).request_method, FCGI_GETENV(arg->request, "REQUEST_URI"), SG(request_info).content_length);
+
+	#ifndef THREADFPM_DEBUG
+		}
+	#endif
 		
 		if(PG(expose_php)) {
 			sapi_add_header(pidstr, pidlen, 1);
@@ -1734,16 +1698,18 @@ static void *thread_request(void*_) {
 
 		fcgi_finish_request(arg->request, 0);
 		
-		SYSLOGE(" %s %lu %.3fms", reqinfo, CGIG(response_length), microtime() - t);
-		
 		if(!fcgi_is_closed(arg->request)) {
-			dprintf("%d is closed\n", pthread_tid);
+			dprintf("is closed\n");
 			zend_first_try {
 				fcgi_accept_request(arg->request);
 			} zend_end_try();
 		}
 
-		dprintf("%d %s %lu %.3fms\n", pthread_tid, reqinfo, CGIG(response_length), microtime() - t);
+		if(UNEXPECTED(isAccess)) {
+			dprintf("%s %lu %.3fms\n", reqinfo, CGIG(response_length), microtime() - t);
+			printf("[%s] %d %s %lu %.3fms\n", gettimeofstr(), pthread_tid, reqinfo, CGIG(response_length), microtime() - t);
+			fflush(stdout);
+		}
 
 	err:
 		fcgi_finish_request(arg->request, 1);
@@ -1755,7 +1721,7 @@ static void *thread_request(void*_) {
 		pthread_mutex_unlock(&lock);
 	}
 
-	dprintf("%d thread end\n", pthread_tid);
+	dprintf("thread end\n");
 
 	ts_free_thread();
 
@@ -1770,31 +1736,30 @@ static void *thread_request(void*_) {
 static void on_accept() {
 	if(mthread != pthread_self()) zend_bailout();
 	
-	dprintf("%d %s\n", pthread_tid, __func__);
+	dprintf("%s\n", __func__);
 }
 
 static void on_read() {
-	dprintf("%d %s\n", pthread_tid, __func__);
+	dprintf("%s\n", __func__);
 }
 
 static void on_close() {
-	dprintf("%d %s\n", pthread_tid, __func__);
+	dprintf("%s\n", __func__);
 }
 
 static void signal_handler(int sig) {
-	dprintf("\033[2K\r");
 	switch(sig) {
 		case SIGINT:
-			dprintf("%d signal SIGINT\n", pthread_tid);
+			dprintf("signal SIGINT\n");
 			break;
 		case SIGTERM:
-			dprintf("%d signal SIGTERM\n", pthread_tid);
+			dprintf("signal SIGTERM\n");
 			break;
 		case SIGUSR1:
-			dprintf("%d signal SIGUSR1\n", pthread_tid);
+			dprintf("signal SIGUSR1\n");
 			break;
 		case SIGUSR2:
-			dprintf("%d signal SIGUSR2\n", pthread_tid);
+			dprintf("signal SIGUSR2\n");
 			break;
 	}
 	
@@ -1961,6 +1926,16 @@ int main(int argc, char *argv[])
 				backlog = atoi(php_optarg);
 				break;
 
+		#ifdef THREADFPM_DEBUG
+			case 'D':
+				isDebug = 1;
+				break;
+		#endif
+		
+			case 'A':
+				isAccess = 1;
+				break;
+
 			default:
 			case 'h':
 			case '?':
@@ -2120,9 +2095,8 @@ consult the installation file that came with this distribution, or visit \n\
 
 	mthread = pthread_self();
 	
-	dprintf("%d listen %s backlog %d\n", pthread_tid, path, backlog);
-
-	OPENLOG();
+	fprintf(stderr, "[%s] The server running for listen %s backlog %d\n", gettimeofstr(), path, backlog);
+	fflush(stderr);
 	
 	t = microtime();
 	while (isRun) {
@@ -2175,7 +2149,7 @@ consult the installation file that came with this distribution, or visit \n\
 		
 		t = microtime();
 
-		dprintf("%d accepted request %lu\n", pthread_tid, arg->id);
+		dprintf("accepted request %lu\n", arg->id);
 
 		pthread_mutex_lock(&lock);
 		nrequests++;
@@ -2202,16 +2176,15 @@ consult the installation file that came with this distribution, or visit \n\
 			continue;
 		}
 		
-		if(threads == 0) {
-			dprintf("%d\n", pthread_tid);
-			dprintf("%d\n", pthread_tid);
+		if(UNEXPECTED(threads == 0)) {
+			dprintf("\n\n======================================\n\n");
 		}
 
 		pthread_mutex_lock(&lock);
 		nthreads++;
 		pthread_mutex_unlock(&lock);
 
-		dprintf("%d pthread_create\n", pthread_tid);
+		dprintf("pthread_create\n");
 
 		pthread_attr_init(&attr);
 		pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
@@ -2235,9 +2208,9 @@ consult the installation file that came with this distribution, or visit \n\
 	while(nthreads > 0) pthread_cond_wait(&cond, &lock);
 	pthread_mutex_unlock(&lock);
 
-	dprintf("%d stoped\n", pthread_tid);
+	fprintf(stderr, "[%s] The server stoped\n", gettimeofstr());
+	fflush(stderr);
 
-	CLOSELOG();
 	fcgi_destroy_request(arg->request);
 	fcgi_shutdown();
 	free(arg);
@@ -2258,6 +2231,8 @@ consult the installation file that came with this distribution, or visit \n\
 		char **args = (char**) malloc(sizeof(char*)*(argc+1));
 		memcpy(args, argv, sizeof(char*)*argc);
 		args[argc] = NULL;
+		fprintf(stderr, "[%s] The server reloading\n", gettimeofstr());
+		fflush(stderr);
 		execv(argv[0], args);
 	}
 
