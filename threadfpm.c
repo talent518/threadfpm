@@ -170,6 +170,8 @@ static const opt_struct OPTIONS[] = {
 	{'n', 0, "no-php-ini"},
 	{'?', 0, "usage"},/* help alias (both '?' and 'usage') */
 	{'v', 0, "version"},
+	{'P', 1, "pid"},
+	{'u', 1, "user"},
 	{'t', 1, "threads"},
 	{'I', 1, "idle-seconds"},
 	{'r', 1, "max-requests"},
@@ -904,7 +906,7 @@ static void php_cgi_usage(char *argv0)
 		prog = "php";
 	}
 
-	php_printf(	"Usage: %s [-n] [-e] [-h] [-i] [-m] [-v] [-t <threads>] [-I <idleseconds>] [-r <max requests>] [-p <path>|<host:port>] [-b backlog]"
+	php_printf(	"Usage: %s [-n] [-e] [-h] [-i] [-m] [-v] [[-P <pidfile>] -u <user>] [-t <threads>] [-I <idleseconds>] [-r <max requests>] [-p <path>|<host:port>] [-b backlog]"
 			#ifdef THREADFPM_DEBUG
 				" [-D]"
 			#endif
@@ -917,6 +919,8 @@ static void php_cgi_usage(char *argv0)
 				"  -i                PHP information\n"
 				"  -m                Show compiled in modules\n"
 				"  -v                Version number\n"
+	         	"  -P <pidfile>      Output pid to file\n"
+	         	"  -u <user>         User name for system\n"
 	         	"  -t <threads>      Max threads\n"
 	         	"  -I <idleseconds>  Automatically kill threads with space idleseconds seconds.\n"
 	         	"  -r <max requests> Automatically restart the program when it is idle and exceeds the maximum number of requests\n"
@@ -1803,6 +1807,8 @@ int main(int argc, char *argv[])
 	unsigned int threads, requests;
 	double t;
 	int idleseconds = 5;
+	
+	char *pidfile = NULL;
 
 #if defined(SIGPIPE) && defined(SIG_IGN)
 	signal(SIGPIPE, SIG_IGN); /* ignore SIGPIPE in standalone mode so
@@ -1896,6 +1902,42 @@ int main(int argc, char *argv[])
 			case 'i': /* php info & quit */
 				php_information = 1;
 				break;
+
+			case 'P':
+				pidfile = php_optarg;
+				break;
+
+			case 'u': {
+				pid_t pid = fork();
+				if(pid < 0) {
+					perror("fork");
+					break;
+				} else if(pid > 0) {
+					if(pidfile) {
+						FILE *fp = fopen(pidfile, "wb");
+						if(fp) {
+							fprintf(fp, "%d", pid);
+							fclose(fp);
+						} else {
+							fprintf(stderr, "fopen(%s): %s\n", pidfile, strerror(errno));
+							fflush(stderr);
+						}
+					}
+					goto out;
+				}
+				struct passwd *pwnam;
+				pwnam = getpwnam(php_optarg);
+
+				if (!pwnam) {
+					perror("getpwnam");
+					break;
+				}
+
+				if(setuid(pwnam->pw_uid)) perror("setuid");
+				// if(setgid(pwnam->pw_gid)) perror("setgid");
+				if (setsid() < 0) perror("setsid");
+				break;
+			}
 
 			case 't':
 				max_threads = atoi(php_optarg);
