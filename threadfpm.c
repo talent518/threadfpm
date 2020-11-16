@@ -1575,6 +1575,7 @@ static thread_arg_t *head_request = NULL, *tail_request = NULL;
 static zend_bool isRun = 1;
 static zend_bool isReload = 0;
 static zend_bool isAccess = 0;
+static int idleseconds = 5;
 
 static void *thread_request(void*_) {
 	thread_arg_t *arg;
@@ -1585,6 +1586,7 @@ static void *thread_request(void*_) {
 	size_t pidlen = snprintf(pidstr, sizeof(pidstr), "Pid: %d", pthread_pid);
 	size_t tidlen = snprintf(tidstr, sizeof(tidstr), "Tid: %d", pthread_tid);
 	double t;
+	struct timespec ts;
 	
 	sem_post(&wsem);
 
@@ -1595,7 +1597,10 @@ static void *thread_request(void*_) {
 	dprintf("thread begin\n");
 
 	while(1) {
-		sem_wait(&rsem);
+		if(!clock_gettime(CLOCK_REALTIME, &ts)) {
+			ts.tv_sec += idleseconds;
+			if(sem_timedwait(&rsem, &ts) && errno == EINTR) break;
+		} else sem_wait(&rsem);
 
 		pthread_mutex_lock(&lock);
 		arg = head_request;
@@ -1805,8 +1810,6 @@ int main(int argc, char *argv[])
 	fd_set set;
 	
 	unsigned int threads, requests;
-	double t;
-	int idleseconds = 5;
 	
 	char *pidfile = NULL;
 
@@ -2140,7 +2143,6 @@ consult the installation file that came with this distribution, or visit \n\
 	fprintf(stderr, "[%s] The server running for listen %s backlog %d\n", gettimeofstr(), path, backlog);
 	fflush(stderr);
 	
-	t = microtime();
 	while (isRun) {
 		SG(server_context) = arg->request;
 
@@ -2178,18 +2180,12 @@ consult the installation file that came with this distribution, or visit \n\
 			requests = nrequests;
 			pthread_mutex_unlock(&lock);
 			
-			if(threads > 0 && microtime() - t >= idleseconds * 1000) {
-				t = microtime();
-				for(ret=requests; ret<threads; ret++) sem_post(&rsem);
-			}
 			if(threads == 0 && argid > max_requests) {
 				isRun = 0;
 				isReload = 1;
-			}
-			continue;
+				break;
+			} else continue;
 		}
-		
-		t = microtime();
 
 		dprintf("accepted request %lu\n", arg->id);
 
