@@ -1810,6 +1810,9 @@ int main(int argc, char *argv[])
 	fd_set set;
 	
 	unsigned int threads, requests;
+#ifdef THREADFPM_DEBUG
+	double t;
+#endif
 	
 	char *pidfile = NULL;
 
@@ -2145,36 +2148,28 @@ consult the installation file that came with this distribution, or visit \n\
 	
 	while (isRun) {
 		SG(server_context) = arg->request;
+		
+	#ifdef THREADFPM_DEBUG
+		if(UNEXPECTED(isDebug)) t = microtime();
+	#endif
 
-		pthread_mutex_lock(&lock);
-		threads = nthreads;
-		requests = nrequests;
-		pthread_mutex_unlock(&lock);
-
-		if(requests >= threads && threads >= max_threads) {
-			timeout.tv_sec = 0;
-			timeout.tv_nsec = 1000000; // 1ms
-			sigprocmask(SIG_BLOCK, &waitset, NULL);
-			if(sigtimedwait(&waitset, &waitinfo, &timeout) > 0) {
-				signal_handler(waitinfo.si_signo);
-			}
-			continue;
+		timeout.tv_sec = 0;
+		timeout.tv_nsec = 0;
+		sigprocmask(SIG_BLOCK, &waitset, NULL);
+		if(sigtimedwait(&waitset, &waitinfo, &timeout) > 0) {
+			signal_handler(waitinfo.si_signo);
+			break;
 		}
+
+		dprintf("signal time wait %lu %.3fms\n", arg->id, microtime() - t);
 		
 		FD_ZERO(&set);
 		FD_SET(fcgi_fd, &set);
 
-		tv.tv_sec = 0;
-		tv.tv_usec = 100000; // 100ms
+		tv.tv_sec = 1;
+		tv.tv_usec = 0;
 		ret = select(fcgi_fd + 1, &set, NULL, NULL, &tv);
 		if (ret <= 0 || !FD_ISSET(fcgi_fd, &set) || (arg->fd = fcgi_accept_request(arg->request)) <= 0) {
-			timeout.tv_sec = 0;
-			timeout.tv_nsec = 10000; // 10us
-			sigprocmask(SIG_BLOCK, &waitset, NULL);
-			if(sigtimedwait(&waitset, &waitinfo, &timeout) > 0) {
-				signal_handler(waitinfo.si_signo);
-			}
-			
 			pthread_mutex_lock(&lock);
 			threads = nthreads;
 			requests = nrequests;
@@ -2187,7 +2182,7 @@ consult the installation file that came with this distribution, or visit \n\
 			} else continue;
 		}
 
-		dprintf("accepted request %lu\n", arg->id);
+		dprintf("accepted request %lu %.3fms\n", arg->id, microtime() - t);
 
 		pthread_mutex_lock(&lock);
 		nrequests++;
@@ -2199,8 +2194,6 @@ consult the installation file that came with this distribution, or visit \n\
 			head_request = arg;
 			tail_request = arg;
 		}
-		threads = nthreads;
-		requests = nrequests;
 		pthread_mutex_unlock(&lock);
 		
 		sem_post(&rsem);
@@ -2209,6 +2202,11 @@ consult the installation file that came with this distribution, or visit \n\
 		arg->id = argid++;
 		arg->request = fcgi_init_request(fcgi_fd, on_accept, on_read, on_close);
 		arg->fd = -1;
+
+		pthread_mutex_lock(&lock);
+		threads = nthreads;
+		requests = nrequests;
+		pthread_mutex_unlock(&lock);
 
 		if(threads >= max_threads || requests <= threads) {
 			continue;
