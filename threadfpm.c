@@ -172,6 +172,7 @@ static const opt_struct OPTIONS[] = {
 	{'v', 0, "version"},
 	{'P', 1, "pid"},
 	{'u', 1, "user"},
+	{'a', 1, "accepts"},
 	{'t', 1, "threads"},
 	{'I', 1, "idle-seconds"},
 	{'r', 1, "max-requests"},
@@ -193,6 +194,7 @@ typedef struct _php_cgi_globals_struct {
 	zend_bool fcgi_logging;
 	int body_fd;
 	char strftime[20]; // 2020-11-08 09:42:30
+	zend_bool is_accept;
 	unsigned long int response_length;
 	char *redirect_status_env;
 	HashTable user_config_cache;
@@ -906,7 +908,7 @@ static void php_cgi_usage(char *argv0)
 		prog = "php";
 	}
 
-	php_printf(	"Usage: %s [-n] [-e] [-h] [-i] [-m] [-v] [[-P <pidfile>] -u <user>] [-t <threads>] [-I <idleseconds>] [-r <max requests>] [-p <path>|<host:port>] [-b backlog]"
+	php_printf(	"Usage: %s [-n] [-e] [-h] [-i] [-m] [-v] [[-P <pidfile>] -u <user>] [-a <accepts>] [-t <threads>] [-I <idleseconds>] [-r <max requests>] [-p <path>|<host:port>] [-b backlog]"
 			#ifdef THREADFPM_DEBUG
 				" [-D]"
 			#endif
@@ -921,7 +923,8 @@ static void php_cgi_usage(char *argv0)
 				"  -v                Version number\n"
 	         	"  -P <pidfile>      Output pid to file\n"
 	         	"  -u <user>         User name for system\n"
-	         	"  -t <threads>      Max threads\n"
+	         	"  -a <accepts>      Accept threads\n"
+	         	"  -t <threads>      Max worker threads\n"
 	         	"  -I <idleseconds>  Automatically kill threads with space idleseconds seconds.\n"
 	         	"  -r <max requests> Automatically restart the program when it is idle and exceeds the maximum number of requests\n"
 				"  -p <path>         Listen for unix socket\n"
@@ -1432,6 +1435,7 @@ static void php_cgi_globals_ctor(php_cgi_globals_struct *php_cgi_globals)
 	zend_hash_init(&php_cgi_globals->user_config_cache, 0, NULL, user_config_cache_entry_dtor, 1);
 	php_cgi_globals->error_header = NULL;
 	php_cgi_globals->body_fd = -1;
+	php_cgi_globals->is_accept = 0;
 	php_cgi_globals->response_length = 0;
 }
 /* }}} */
@@ -1561,21 +1565,25 @@ typedef struct _thread_arg_t {
 	unsigned long int id;
 	fcgi_request *request;
 	int fd;
+	double t;
 	struct _thread_arg_t *next;
 } thread_arg_t;
 
 static int fcgi_fd = 0;
-static unsigned int nthreads = 0;
+static unsigned int nthreads = 0, naccepts = 0;
 static pthread_mutex_t lock;
 static pthread_cond_t cond;
 static sem_t rsem, wsem;
-static pthread_t mthread;
 static unsigned int nrequests = 0;
 static thread_arg_t *head_request = NULL, *tail_request = NULL;
 static zend_bool isRun = 1;
 static zend_bool isReload = 0;
 static zend_bool isAccess = 0;
 static int idleseconds = 5;
+
+static int max_threads = 64;
+static unsigned long int argid = 0;
+static unsigned long int max_requests = 10000000;
 
 static void *thread_request(void*_) {
 	thread_arg_t *arg;
@@ -1620,7 +1628,7 @@ static void *thread_request(void*_) {
 
 		SG(server_context) = arg->request;
 
-		dprintf("running request %lu\n", arg->id);
+		dprintf("running request %lu %.3fms\n", arg->id, microtime() - arg->t);
 		
 		t = microtime();
 		CGIG(body_fd) = -1;
@@ -1715,8 +1723,8 @@ static void *thread_request(void*_) {
 		}
 
 		if(UNEXPECTED(isAccess)) {
-			dprintf("%s %lu %.3fms\n", reqinfo, CGIG(response_length), microtime() - t);
-			printf("[%s] %d %s %lu %.3fms\n", gettimeofstr(), pthread_tid, reqinfo, CGIG(response_length), microtime() - t);
+			dprintf("%s %lu %.3fms + %.3fms\n", reqinfo, CGIG(response_length), microtime() - t, t - arg->t);
+			printf("[%s] %d %s %lu %.3fms + %.3fms\n", gettimeofstr(), pthread_tid, reqinfo, CGIG(response_length), microtime() - t, t - arg->t);
 			fflush(stdout);
 		}
 
@@ -1743,7 +1751,7 @@ static void *thread_request(void*_) {
 }
 
 static void on_accept() {
-	if(mthread != pthread_self()) zend_bailout();
+	if(CGIG(is_accept) == 0) zend_bailout();
 	
 	dprintf("%s\n", __func__);
 }
@@ -1754,6 +1762,114 @@ static void on_read() {
 
 static void on_close() {
 	dprintf("%s\n", __func__);
+}
+
+static zend_bool create_thread(void*(*handler)(void*), void* arg) {
+	pthread_t thread;
+	pthread_attr_t attr;
+	int ret;
+#ifdef THREADFPM_DEBUG
+	double t = 0;
+#endif
+
+	dprintf("pthread_create begin\n");
+
+#ifdef THREADFPM_DEBUG
+	if(UNEXPECTED(isDebug)) t = microtime();
+#endif
+	
+	pthread_attr_init(&attr);
+	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+	ret = pthread_create(&thread, &attr, handler, arg);
+	if(ret) {
+		perror("pthread_create() is error");
+	} else {
+		sem_wait(&wsem);
+	}
+	pthread_attr_destroy(&attr);
+
+	dprintf("pthread_create end %.3fms\n", microtime() - t);
+
+	return ret == 0;
+}
+
+static void *thread_accept(void*_) {
+	thread_arg_t *arg;
+	
+	pthread_mutex_lock(&lock);
+	naccepts++;
+	pthread_mutex_unlock(&lock);
+
+	sem_post(&wsem);
+
+	thread_sigmask();
+
+	ts_resource(0);
+	
+	CGIG(is_accept) = 1;
+	
+	dprintf("thread begin\n");
+
+	while(isRun) {
+		arg = (thread_arg_t*)malloc(sizeof(thread_arg_t));
+		pthread_mutex_lock(&lock);
+		arg->id = argid++;
+		pthread_mutex_unlock(&lock);
+		arg->request = fcgi_init_request(fcgi_fd, on_accept, on_read, on_close);
+		arg->t = microtime();
+		arg->fd = fcgi_accept_request(arg->request);
+		
+		if(arg->fd <= 0) {
+			fcgi_destroy_request(arg->request);
+			free(arg);
+			break;
+		}
+
+		dprintf("accepted request %lu %.3fms %d\n", arg->id, microtime() - arg->t, arg->fd);
+
+		pthread_mutex_lock(&lock);
+		nrequests++;
+		arg->next = NULL;
+		if(tail_request) {
+			tail_request->next = arg;
+			tail_request = arg;
+		} else {
+			head_request = arg;
+			tail_request = arg;
+		}
+		pthread_mutex_unlock(&lock);
+		
+		sem_post(&rsem);
+
+		pthread_mutex_lock(&lock);
+		if(nthreads < max_threads && nrequests > nthreads) {
+		#ifdef THREADFPM_DEBUG
+			if(nthreads == 0) {
+				dprintf("\n\n======================================\n\n");
+			}
+		#endif
+			
+			nthreads++;
+			pthread_mutex_unlock(&lock);
+			
+			if(!create_thread(thread_request, NULL)) {
+				pthread_mutex_lock(&lock);
+				nthreads--;
+				pthread_mutex_unlock(&lock);
+			}
+		} else pthread_mutex_unlock(&lock);
+	}
+	
+	dprintf("thread end\n");
+
+	ts_free_thread();
+	
+	pthread_mutex_lock(&lock);
+	naccepts--;
+	pthread_cond_signal(&cond);
+	pthread_mutex_unlock(&lock);
+
+	pthread_exit(NULL);
 }
 
 static void signal_handler(int sig) {
@@ -1790,30 +1906,19 @@ int main(int argc, char *argv[])
 	int ini_entries_len = 0;
 	/* end of temporary locals */
 
-	thread_arg_t *arg;
 	int php_information = 0;
+
+	int max_accepts = 4;
 
 	const char *path = "127.0.0.1:9000";
 	int backlog = 256;
-	int max_threads = 64;
-	unsigned long int argid = 0;
-	unsigned long int max_requests = 10000000;
 
 	int ret;
-	pthread_t thread;
-	pthread_attr_t attr;
 
 	sigset_t waitset;
 	siginfo_t waitinfo;
 	struct timespec timeout;
-	struct timeval tv;
-	fd_set set;
-	
-	unsigned int threads, requests;
-#ifdef THREADFPM_DEBUG
-	double t;
-#endif
-	
+
 	char *pidfile = NULL;
 
 #if defined(SIGPIPE) && defined(SIG_IGN)
@@ -1944,6 +2049,13 @@ int main(int argc, char *argv[])
 				if (setsid() < 0) perror("setsid");
 				break;
 			}
+
+			case 'a':
+				max_accepts = atoi(php_optarg);
+				if(max_accepts < 1) {
+					max_accepts = 1;
+				}
+				break;
 
 			case 't':
 				max_threads = atoi(php_optarg);
@@ -2128,11 +2240,6 @@ consult the installation file that came with this distribution, or visit \n\
 	sem_init(&rsem, 0, 0);
 	sem_init(&wsem, 0, 0);
 
-	arg = (thread_arg_t*)malloc(sizeof(thread_arg_t));
-	arg->id = argid++;
-	arg->request = fcgi_init_request(fcgi_fd, on_accept, on_read, on_close);
-	arg->fd = -1;
-
 	thread_sigmask();
 	
 	sigemptyset(&waitset);
@@ -2140,116 +2247,39 @@ consult the installation file that came with this distribution, or visit \n\
 	sigaddset(&waitset, SIGTERM);
 	sigaddset(&waitset, SIGUSR1);
 	sigaddset(&waitset, SIGUSR2);
-
-	mthread = pthread_self();
+	
+	for(ret=0; ret<max_accepts; ret++) {
+		create_thread(thread_accept, NULL + ret);
+	}
 	
 	fprintf(stderr, "[%s] The server running for listen %s backlog %d\n", gettimeofstr(), path, backlog);
 	fflush(stderr);
-	
-	while (isRun) {
-		SG(server_context) = arg->request;
-		
-	#ifdef THREADFPM_DEBUG
-		if(UNEXPECTED(isDebug)) t = microtime();
-	#endif
 
-		timeout.tv_sec = 0;
-		timeout.tv_nsec = 0;
+	while(isRun) {
 		sigprocmask(SIG_BLOCK, &waitset, NULL);
+		timeout.tv_sec = 1;
+		timeout.tv_nsec = 0;
 		if(sigtimedwait(&waitset, &waitinfo, &timeout) > 0) {
 			signal_handler(waitinfo.si_signo);
-			break;
-		}
-
-		dprintf("signal time wait %lu %.3fms\n", arg->id, microtime() - t);
-		
-		FD_ZERO(&set);
-		FD_SET(fcgi_fd, &set);
-
-		tv.tv_sec = 1;
-		tv.tv_usec = 0;
-		ret = select(fcgi_fd + 1, &set, NULL, NULL, &tv);
-		if (ret <= 0 || !FD_ISSET(fcgi_fd, &set) || (arg->fd = fcgi_accept_request(arg->request)) <= 0) {
-			pthread_mutex_lock(&lock);
-			threads = nthreads;
-			requests = nrequests;
-			pthread_mutex_unlock(&lock);
-			
-			if(threads == 0 && argid > max_requests) {
-				isRun = 0;
-				isReload = 1;
-				break;
-			} else continue;
-		}
-
-		dprintf("accepted request %lu %.3fms\n", arg->id, microtime() - t);
-
-		pthread_mutex_lock(&lock);
-		nrequests++;
-		arg->next = NULL;
-		if(tail_request) {
-			tail_request->next = arg;
-			tail_request = arg;
-		} else {
-			head_request = arg;
-			tail_request = arg;
-		}
-		pthread_mutex_unlock(&lock);
-		
-		sem_post(&rsem);
-
-		arg = (thread_arg_t*)malloc(sizeof(thread_arg_t));
-		arg->id = argid++;
-		arg->request = fcgi_init_request(fcgi_fd, on_accept, on_read, on_close);
-		arg->fd = -1;
-
-		pthread_mutex_lock(&lock);
-		threads = nthreads;
-		requests = nrequests;
-		pthread_mutex_unlock(&lock);
-
-		if(threads >= max_threads || requests <= threads) {
-			continue;
 		}
 		
-		if(UNEXPECTED(threads == 0)) {
-			dprintf("\n\n======================================\n\n");
-		}
-
-		pthread_mutex_lock(&lock);
-		nthreads++;
-		pthread_mutex_unlock(&lock);
-
-		dprintf("pthread_create\n");
-
-		pthread_attr_init(&attr);
-		pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-		if(pthread_create(&thread, &attr, thread_request, NULL)) {
-			perror("pthread_create() is error");
-			
-			pthread_mutex_lock(&lock);
-			nthreads--;
-			pthread_mutex_unlock(&lock);
-		} else {
-			sem_wait(&wsem);
-		}
-		pthread_attr_destroy(&attr);
+		fprintf(stderr, "[%s] STAT: %u requests, %u nthreads\n", gettimeofstr(), nrequests, nthreads);
+		fflush(stderr);
 	}
 
+	shutdown(fcgi_fd, SHUT_RDWR);
 	close(fcgi_fd);
 	fcgi_fd = -1;
 	
 	pthread_mutex_lock(&lock);
 	for(ret=0; ret<nthreads; ret++) sem_post(&rsem);
-	while(nthreads > 0) pthread_cond_wait(&cond, &lock);
+	while(nthreads > 0 || naccepts > 0) pthread_cond_wait(&cond, &lock);
 	pthread_mutex_unlock(&lock);
 
 	fprintf(stderr, "[%s] The server stoped\n", gettimeofstr());
 	fflush(stderr);
 
-	fcgi_destroy_request(arg->request);
 	fcgi_shutdown();
-	free(arg);
 
 	if (cgi_sapi_module.php_ini_path_override) {
 		free(cgi_sapi_module.php_ini_path_override);
