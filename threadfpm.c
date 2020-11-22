@@ -170,6 +170,7 @@ static const opt_struct OPTIONS[] = {
 	{'n', 0, "no-php-ini"},
 	{'?', 0, "usage"},/* help alias (both '?' and 'usage') */
 	{'v', 0, "version"},
+	{'R', 0, "realpath"},
 	{'P', 1, "pid"},
 	{'u', 1, "user"},
 	{'a', 1, "accepts"},
@@ -901,7 +902,7 @@ static void php_cgi_usage(char *argv0)
 		prog = "php";
 	}
 
-	php_printf(	"Usage: %s [-n] [-e] [-h] [-i] [-m] [-v] [[-P <pidfile>] -u <user>] [-a <accepts>] [-t <threads>] [-I <idleseconds>] [-r <max requests>] [-p <path>|<host:port>] [-b backlog]"
+	php_printf(	"Usage: %s [-n] [-e] [-h] [-i] [-m] [-v] [-R] [[-P <pidfile>] -u <user>] [-a <accepts>] [-t <threads>] [-I <idleseconds>] [-r <max requests>] [-p <path>|<host:port>] [-b backlog]"
 			#ifdef THREADFPM_DEBUG
 				" [-D]"
 			#endif
@@ -914,6 +915,7 @@ static void php_cgi_usage(char *argv0)
 				"  -i                PHP information\n"
 				"  -m                Show compiled in modules\n"
 				"  -v                Version number\n"
+				"  -R                Enable realpath\n"
 	         	"  -P <pidfile>      Output pid to file\n"
 	         	"  -u <user>         User name for system\n"
 	         	"  -a <accepts>      Accept threads\n"
@@ -1572,6 +1574,7 @@ static thread_arg_t *head_request = NULL, *tail_request = NULL;
 static zend_bool isRun = 1;
 static zend_bool isReload = 0;
 static zend_bool isAccess = 0;
+static zend_bool isRealpath = 0;
 static int idleseconds = 5;
 
 static int max_threads = 64;
@@ -1588,6 +1591,7 @@ static void *thread_request(void*_) {
 	size_t tidlen = snprintf(tidstr, sizeof(tidstr), "Tid: %d", pthread_tid);
 	double t;
 	struct timespec ts;
+	char path[PATH_MAX];
 	
 	sem_post(&wsem);
 
@@ -1644,22 +1648,13 @@ static void *thread_request(void*_) {
 
 		/* If path_translated is NULL, terminate here with a 404 */
 		if (UNEXPECTED(!SG(request_info).path_translated)) {
-			zend_try {
+			zend_first_try {
 				fprintf(stderr, "Primary script unknown\n");
 				SG(sapi_headers).http_response_code = 404;
 				PUTS("File not found.\n");
 			} zend_catch {
 			} zend_end_try();
 			goto fastcgi_request_done;
-		}
-
-		{
-			char path[PATH_MAX];
-			if(realpath(SG(request_info).path_translated, path)) {
-				primary_script = estrdup(path);
-			} else {
-				primary_script = estrdup(SG(request_info).path_translated);
-			}
 		}
 		
 	#ifndef THREADFPM_DEBUG
@@ -1675,9 +1670,31 @@ static void *thread_request(void*_) {
 			sapi_add_header(pidstr, pidlen, 1);
 			sapi_add_header(tidstr, tidlen, 1);
 		}
+		
+		if(isRealpath) {
+			if(realpath(SG(request_info).path_translated, path)) {
+				efree(SG(request_info).path_translated);
+				SG(request_info).path_translated = estrdup(path);
+			} else {
+				goto noexists;
+			}
+		}
+
+		if (UNEXPECTED(php_fopen_primary_script(&file_handle) == FAILURE)) {
+			noexists:
+			zend_first_try {
+				if (errno == EACCES) {
+					SG(sapi_headers).http_response_code = 403;
+					PUTS("Access denied.\n");
+				} else {
+					SG(sapi_headers).http_response_code = 404;
+					PUTS("No input file specified.\n");
+				}
+			} zend_end_try();
+			goto fastcgi_request_done;
+		}
 
 		zend_first_try {
-			zend_stream_init_filename(&file_handle, primary_script);
 			php_execute_script(&file_handle);
 		} zend_end_try();
 
@@ -2005,6 +2022,10 @@ int main(int argc, char *argv[])
 
 			case 'i': /* php info & quit */
 				php_information = 1;
+				break;
+
+			case 'R':
+				isRealpath = 1;
 				break;
 
 			case 'P':
