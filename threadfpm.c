@@ -251,11 +251,8 @@ const char *gettimeofstr() {
 	return CGIG(strftime);
 }
 
-static int module_name_cmp(const void *a, const void *b) /* {{{ */
+static int module_name_cmp(Bucket *f, Bucket *s) /* {{{ */
 {
-	Bucket *f = (Bucket *) a;
-	Bucket *s = (Bucket *) b;
-
 	return strcasecmp(	((zend_module_entry *) Z_PTR(f->val))->name,
 						((zend_module_entry *) Z_PTR(s->val))->name);
 }
@@ -276,10 +273,9 @@ static void print_modules(void) /* {{{ */
 }
 /* }}} */
 
-static int print_extension_info(zend_extension *ext, void *arg) /* {{{ */
+static void print_extension_info(zend_extension *ext) /* {{{ */
 {
 	php_printf("%s\n", ext->name);
-	return 0;
 }
 /* }}} */
 
@@ -298,7 +294,7 @@ static void print_extensions(void) /* {{{ */
 	zend_llist_copy(&sorted_exts, &zend_extensions);
 	sorted_exts.dtor = NULL;
 	zend_llist_sort(&sorted_exts, extension_name_cmp);
-	zend_llist_apply_with_argument(&sorted_exts, (llist_apply_with_arg_func_t) print_extension_info, NULL);
+	zend_llist_apply(&sorted_exts, (llist_apply_func_t) print_extension_info);
 	zend_llist_destroy(&sorted_exts);
 }
 /* }}} */
@@ -580,10 +576,10 @@ static char *sapi_cgi_read_cookies(void) /* {{{ */
 }
 /* }}} */
 
-static void cgi_php_load_env_var(char *var, unsigned int var_len, char *val, unsigned int val_len, void *arg) /* {{{ */
+static void cgi_php_load_env_var(const char *var, unsigned int var_len, char *val, unsigned int val_len, void *arg) /* {{{ */
 {
-	zval *array_ptr = (zval*)arg;
-	int filter_arg = (Z_ARR_P(array_ptr) == Z_ARR(PG(http_globals)[TRACK_VARS_ENV]))?PARSE_ENV:PARSE_SERVER;
+	zval *array_ptr = (zval *) arg;
+	int filter_arg = (Z_ARR_P(array_ptr) == Z_ARR(PG(http_globals)[TRACK_VARS_ENV])) ? PARSE_ENV : PARSE_SERVER;
 	size_t new_val_len;
 
 	if (sapi_module.input_filter(filter_arg, var, &val, strlen(val), &new_val_len)) {
