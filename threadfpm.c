@@ -148,7 +148,7 @@ static int parent = 1;
 
 static int fpm_is_running = 0;
 
-static char *sapi_cgibin_getenv(char *name, size_t name_len);
+static char *sapi_cgibin_getenv(const char *name, size_t name_len);
 
 #define PHP_MODE_STANDARD	1
 #define PHP_MODE_HIGHLIGHT	2
@@ -555,7 +555,7 @@ static size_t sapi_cgi_read_post(char *buffer, size_t count_bytes) /* {{{ */
 }
 /* }}} */
 
-static char *sapi_cgibin_getenv(char *name, size_t name_len) /* {{{ */
+static char *sapi_cgibin_getenv(const char *name, size_t name_len) /* {{{ */
 {
 	/* if fpm has started, use fcgi env */
 	if (fpm_is_running) {
@@ -682,7 +682,7 @@ void sapi_cgi_log_fastcgi(int level, char *message, size_t len)
 
 /* {{{ sapi_cgi_log_message
  */
-static void sapi_cgi_log_message(char *message, int syslog_type_int)
+static void sapi_cgi_log_message(const char *message, int syslog_type_int)
 {
 	fprintf(stderr, "PHP message: %s\n", message);
 }
