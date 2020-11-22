@@ -331,7 +331,6 @@ static inline size_t sapi_cgibin_single_write(const char *str, uint32_t str_leng
 	/* sapi has started which means everyhting must be send through fcgi */
 	if (fpm_is_running) {
 		fcgi_request *request = (fcgi_request*) SG(server_context);
-		if(!request) return 0;
 
 		ret = fcgi_write(request, FCGI_STDOUT, str, str_length);
 		if (ret <= 0) {
@@ -529,7 +528,6 @@ static size_t sapi_cgi_read_post(char *buffer, size_t count_bytes) /* {{{ */
 	}
 	while (read_bytes < count_bytes) {
 		fcgi_request *request = (fcgi_request*) SG(server_context);
-		if(!request) return 0;
 
 		if (CGIG(body_fd) == -1) {
 			char *request_body_filename = FCGI_GETENV(request, "REQUEST_BODY_FILE");
@@ -566,7 +564,7 @@ static char *sapi_cgibin_getenv(char *name, size_t name_len) /* {{{ */
 	/* if fpm has started, use fcgi env */
 	if (fpm_is_running) {
 		fcgi_request *request = (fcgi_request*) SG(server_context);
-		if(request) return fcgi_getenv(request, name, name_len);
+		return fcgi_getenv(request, name, name_len);
 	}
 
 	/* if fpm has not started yet, use std env */
@@ -578,7 +576,7 @@ static char *sapi_cgi_read_cookies(void) /* {{{ */
 {
 	fcgi_request *request = (fcgi_request*) SG(server_context);
 
-	return request ? FCGI_GETENV(request, "HTTP_COOKIE") : NULL;
+	return FCGI_GETENV(request, "HTTP_COOKIE");
 }
 /* }}} */
 
@@ -618,10 +616,7 @@ void cgi_php_import_environment_variables(zval *array_ptr) /* {{{ */
 	php_php_import_environment_variables(array_ptr);
 
 	request = (fcgi_request*) SG(server_context);
-
-	if(request) {
-		fcgi_loadenv(request, cgi_php_load_env_var, array_ptr);
-	}
+	fcgi_loadenv(request, cgi_php_load_env_var, array_ptr);
 }
 /* }}} */
 
@@ -773,8 +768,6 @@ static int sapi_cgi_activate(void) /* {{{ */
 	fcgi_request *request = (fcgi_request*) SG(server_context);
 	char *path, *doc_root, *server_name;
 	uint32_t path_len, doc_root_len, server_name_len;
-
-	if(!request) return SUCCESS;
 
 	/* PATH_TRANSLATED should be defined at this stage but better safe than sorry :) */
 	if (!SG(request_info).path_translated) {
