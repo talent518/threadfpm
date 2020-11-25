@@ -1497,6 +1497,58 @@ PHP_FUNCTION(fastcgi_finish_request) /* {{{ */
 }
 /* }}} */
 
+#if PHP_VERSION_ID < 70300
+SAPI_API void sapi_add_request_header(char *var, unsigned int var_len, char *val, unsigned int val_len, void *arg) /* {{{ */
+{
+	zval *return_value = (zval*)arg;
+	char *str = NULL;
+
+	ALLOCA_FLAG(use_heap)
+
+	if (var_len > 5 &&
+	    var[0] == 'H' &&
+	    var[1] == 'T' &&
+	    var[2] == 'T' &&
+	    var[3] == 'P' &&
+	    var[4] == '_') {
+
+		char *p;
+
+		var_len -= 5;
+		p = var + 5;
+		var = str = do_alloca(var_len + 1, use_heap);
+		*str++ = *p++;
+		while (*p) {
+			if (*p == '_') {
+				*str++ = '-';
+				p++;
+				if (*p) {
+					*str++ = *p++;
+				}
+			} else if (*p >= 'A' && *p <= 'Z') {
+				*str++ = (*p++ - 'A' + 'a');
+			} else {
+				*str++ = *p++;
+			}
+		}
+		*str = 0;
+	} else if (var_len == sizeof("CONTENT_TYPE")-1 &&
+	           memcmp(var, "CONTENT_TYPE", sizeof("CONTENT_TYPE")-1) == 0) {
+		var = "Content-Type";
+	} else if (var_len == sizeof("CONTENT_LENGTH")-1 &&
+	           memcmp(var, "CONTENT_LENGTH", sizeof("CONTENT_LENGTH")-1) == 0) {
+		var = "Content-Length";
+	} else {
+		return;
+	}
+	add_assoc_stringl_ex(return_value, var, var_len, val, val_len);
+	if (str) {
+		free_alloca(var, use_heap);
+	}
+}
+/* }}} */
+#endif
+
 PHP_FUNCTION(apache_request_headers) /* {{{ */
 {
 	fcgi_request *request;
@@ -1941,7 +1993,12 @@ int main(int argc, char *argv[])
 #endif
 
 #ifdef ZTS
-	php_tsrm_startup();
+	#ifdef php_tsrm_startup
+		php_tsrm_startup();
+	#else
+		ret = tsrm_startup(1, 1, 0, NULL);
+		(void)ts_resource(0);
+    #endif
 #endif
 
 	zend_signal_startup();
@@ -2113,7 +2170,9 @@ int main(int argc, char *argv[])
 			default:
 			case 'h':
 			case '?':
+		#ifdef PHP_GETOPT_INVALID_ARG
 			case PHP_GETOPT_INVALID_ARG:
+		#endif
 				cgi_sapi_module.startup(&cgi_sapi_module);
 				php_output_activate();
 				SG(headers_sent) = 1;
@@ -2121,7 +2180,11 @@ int main(int argc, char *argv[])
 				php_output_end_all();
 				php_output_deactivate();
 				fcgi_shutdown();
+			#ifdef PHP_GETOPT_INVALID_ARG
 				exit_status = (c != PHP_GETOPT_INVALID_ARG) ? FPM_EXIT_OK : FPM_EXIT_USAGE;
+			#else
+				exit_status = (c == 'h') ? FPM_EXIT_OK : FPM_EXIT_USAGE;
+			#endif
 				goto out;
 
 			case 'v': /* show php version & quit */
