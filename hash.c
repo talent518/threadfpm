@@ -53,7 +53,7 @@
 #define HASH_PROTECT_RECURSION(ht)														\
 	if ((ht)->bApplyProtection) {														\
 		if ((ht)->nApplyCount++ >= 3) {													\
-			fprintf(stderr, "Nesting level too deep - recursive dependency?");		\
+			fprintf(stderr, "Nesting level too deep - recursive dependency?\n");		\
 		}																				\
 	}
 
