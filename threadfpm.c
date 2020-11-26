@@ -2514,9 +2514,14 @@ static void *thread_request(void*_) {
 	pthread_exit(NULL);
 }
 
+static unsigned int requests = 0;
 static void on_accept() {
 	if(CGIG(is_accept) == 0) zend_bailout();
-	
+
+	pthread_mutex_lock(&lock);
+	requests++;
+	pthread_mutex_unlock(&lock);	
+
 	dprintf("%s\n", __func__);
 }
 
@@ -2684,6 +2689,8 @@ int main(int argc, char *argv[])
 	struct timespec timeout;
 
 	char *pidfile = NULL;
+
+	unsigned int reqs;
 
 #if defined(SIGPIPE) && defined(SIG_IGN)
 	signal(SIGPIPE, SIG_IGN); /* ignore SIGPIPE in standalone mode so
@@ -3033,7 +3040,12 @@ consult the installation file that came with this distribution, or visit \n\
 			signal_handler(waitinfo.si_signo);
 		}
 		
-		fprintf(stderr, "[%s] STAT: %u requests, %u nthreads\n", gettimeofstr(), nrequests, nthreads);
+	    pthread_mutex_lock(&lock);
+	    reqs = requests;
+		requests = 0;
+    	pthread_mutex_unlock(&lock);    
+
+		fprintf(stderr, "[%s] STAT: %u requests for running, %u requests for pre second, %u nthreads\n", gettimeofstr(), nrequests, reqs, nthreads);
 		fflush(stderr);
 	}
 
