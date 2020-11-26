@@ -78,7 +78,7 @@ void hash_table_value_free(value_t *value);
 int _hash_table_init(hash_table_t *ht, uint nSize, hash_dtor_func_t pDestructor, zend_bool bApplyProtection);
 void hash_table_destroy(hash_table_t *ht);
 void hash_table_clean(hash_table_t *ht);
-#define hash_table_init(ht, nSize)                                       _hash_table_init((ht), (nSize), hash_table_value_free, 1)
+#define hash_table_init(ht, nSize)                                       _hash_table_init((ht), (nSize), hash_table_value_free, 0)
 #define hash_table_init_ex(ht, nSize, pDestructor, bApplyProtection)     _hash_table_init((ht), (nSize), (pDestructor), (bApplyProtection))
 
 void hash_table_set_apply_protection(hash_table_t *ht, zend_bool bApplyProtection);
