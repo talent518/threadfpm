@@ -22,7 +22,7 @@ if test "$PHP_THREADFPM" != "no"; then
   SAPI_THREADFPM_PATH=sapi/threadfpm/threadfpm
 
   PHP_THREADFPM_CFLAGS="-I$abs_srcdir/sapi/threadfpm -DZEND_ENABLE_STATIC_TSRMLS_CACHE=1"
-  PHP_THREADFPM_FILES="threadfpm.c"
+  PHP_THREADFPM_FILES="threadfpm.c hash.c"
 
   PHP_SELECT_SAPI(threadfpm, program, $PHP_THREADFPM_FILES, $PHP_THREADFPM_CFLAGS, '$(SAPI_THREADFPM_PATH)')
 
