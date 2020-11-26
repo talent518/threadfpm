@@ -2179,7 +2179,7 @@ static PHP_FUNCTION(share_var_set)
 {
 	zval *arguments;
 	int arg_num = ZEND_NUM_ARGS(), i;
-	if(arg_num <= 0) return;
+	if(arg_num <= 1) return;
 
 	arguments = (zval *) safe_emalloc(sizeof(zval), arg_num, 0);
 	if(zend_get_parameters_array_ex(arg_num, arguments) == FAILURE) goto end;
@@ -2188,7 +2188,7 @@ static PHP_FUNCTION(share_var_set)
 	value_t v1 = {.type=HT_T,.ptr=share_var_ht}, v2 = {.type=NULL_T};
 	RETVAL_FALSE;
 	for(i=0; i<arg_num && v1.type == HT_T; i++) {
-		if(i+1 == arg_num) {
+		if(i+2 == arg_num) {
 			zval_to_value(&arguments[i+1], &v2);
 			if(Z_TYPE(arguments[i]) == IS_LONG) {
 				hash_table_index_update((hash_table_t*) v1.ptr, Z_LVAL(arguments[i]), &v2, NULL);
@@ -2196,11 +2196,36 @@ static PHP_FUNCTION(share_var_set)
 				convert_to_string(&arguments[i]);
 				hash_table_update((hash_table_t*) v1.ptr, Z_STRVAL(arguments[i]), Z_STRLEN(arguments[i]), &v2, NULL);
 			}
+			break;
 		} else if(Z_TYPE(arguments[i]) == IS_LONG) {
-			if(hash_table_index_find((hash_table_t*) v1.ptr, Z_LVAL(arguments[i]), &v2) == FAILURE) break;
+			if(hash_table_index_find((hash_table_t*) v1.ptr, Z_LVAL(arguments[i]), &v2) == FAILURE) {
+				v2.type = HT_T;
+				v2.ptr = malloc(sizeof(hash_table_t));
+				hash_table_init(v2.ptr, 2);
+				hash_table_index_update((hash_table_t*) v1.ptr, Z_LVAL(arguments[i]), &v2, NULL);
+			} else {
+				if(v2.type != HT_T) {
+					v2.type = HT_T;
+					v2.ptr = malloc(sizeof(hash_table_t));
+					hash_table_init(v2.ptr, 2);
+					hash_table_index_update((hash_table_t*) v1.ptr, Z_LVAL(arguments[i]), &v2, NULL);
+				}
+			}
 		} else {
 			convert_to_string(&arguments[0]);
-			if(hash_table_find((hash_table_t*) v1.ptr, Z_STRVAL(arguments[i]), Z_STRLEN(arguments[i]), &v2) == FAILURE) break;
+			if(hash_table_find((hash_table_t*) v1.ptr, Z_STRVAL(arguments[i]), Z_STRLEN(arguments[i]), &v2) == FAILURE) {
+				v2.type = HT_T;
+				v2.ptr = malloc(sizeof(hash_table_t));
+				hash_table_init(v2.ptr, 2);
+				hash_table_update((hash_table_t*) v1.ptr, Z_STRVAL(arguments[i]), Z_STRLEN(arguments[i]), &v2, NULL);
+			} else {
+				if(v2.type != HT_T) {
+					v2.type = HT_T;
+					v2.ptr = malloc(sizeof(hash_table_t));
+					hash_table_init(v2.ptr, 2);
+					hash_table_update((hash_table_t*) v1.ptr, Z_STRVAL(arguments[i]), Z_STRLEN(arguments[i]), &v2, NULL);
+				}
+			}
 		}
 		v1 = v2;
 	}
