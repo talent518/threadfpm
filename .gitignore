@@ -1,3 +1,5 @@
 threadfpm
 *.lo
+*.o
+*.loT
 .libs
