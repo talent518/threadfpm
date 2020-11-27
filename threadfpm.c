@@ -2518,14 +2518,14 @@ static unsigned int requests = 0;
 static void on_accept() {
 	if(CGIG(is_accept) == 0) zend_bailout();
 
-	pthread_mutex_lock(&lock);
-	requests++;
-	pthread_mutex_unlock(&lock);	
-
 	dprintf("%s\n", __func__);
 }
 
 static void on_read() {
+	pthread_mutex_lock(&lock);
+	requests++;
+	pthread_mutex_unlock(&lock);
+
 	dprintf("%s\n", __func__);
 }
 
