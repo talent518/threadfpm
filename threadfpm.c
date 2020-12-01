@@ -2380,6 +2380,7 @@ static pthread_mutex_t lock;
 static pthread_cond_t cond;
 static sem_t rsem, wsem;
 static unsigned int nrequests = 0;
+static unsigned int requests = 0;
 static thread_arg_t *head_request = NULL, *tail_request = NULL;
 static zend_bool isRun = 1;
 static zend_bool isReload = 0;
@@ -2533,6 +2534,10 @@ static void *thread_request(void*_) {
 
 		php_request_shutdown((void *) 0);
 
+		pthread_mutex_lock(&lock);
+		requests++;
+		pthread_mutex_unlock(&lock);
+
 		fcgi_finish_request(arg->request, 0);
 		
 		if(!fcgi_is_closed(arg->request)) {
@@ -2570,7 +2575,6 @@ static void *thread_request(void*_) {
 	pthread_exit(NULL);
 }
 
-static unsigned int requests = 0;
 static void on_accept() {
 	if(CGIG(is_accept) == 0) zend_bailout();
 
@@ -2578,10 +2582,6 @@ static void on_accept() {
 }
 
 static void on_read() {
-	pthread_mutex_lock(&lock);
-	requests++;
-	pthread_mutex_unlock(&lock);
-
 	dprintf("%s\n", __func__);
 }
 
@@ -2746,7 +2746,7 @@ int main(int argc, char *argv[])
 
 	char *pidfile = NULL;
 
-	unsigned int reqs;
+	unsigned int reqs, nreqs;
 
 #if defined(SIGPIPE) && defined(SIG_IGN)
 	signal(SIGPIPE, SIG_IGN); /* ignore SIGPIPE in standalone mode so
@@ -3108,11 +3108,12 @@ consult the installation file that came with this distribution, or visit \n\
 		}
 		
 	    pthread_mutex_lock(&lock);
-	    reqs = requests;
+	    reqs = requests; // complete of requests
+	    nreqs = nrequests; // running of requests
 		requests = 0;
     	pthread_mutex_unlock(&lock);    
 
-		fprintf(stderr, "[%s] STAT: %u requests for running, %u requests for pre second, %u nthreads\n", gettimeofstr(), nrequests, reqs, nthreads);
+		fprintf(stderr, "[%s] STAT: Running %u requests, completed %u requests/second, %u nthreads\n", gettimeofstr(), nreqs, reqs, nthreads);
 		fflush(stderr);
 	}
 
