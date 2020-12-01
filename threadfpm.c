@@ -2691,6 +2691,9 @@ int main(int argc, char *argv[])
 	char *pidfile = NULL;
 
 	unsigned int reqs, nreqs;
+	
+	const int REQC = 10;
+	unsigned int reqv[REQC], reqc = 0, reqi = 0, reqn = 0;
 
 #if defined(SIGPIPE) && defined(SIG_IGN)
 	signal(SIGPIPE, SIG_IGN); /* ignore SIGPIPE in standalone mode so
@@ -3031,6 +3034,8 @@ consult the installation file that came with this distribution, or visit \n\
 	
 	fprintf(stderr, "[%s] The server running for listen %s backlog %d\n", gettimeofstr(), path, backlog);
 	fflush(stderr);
+	
+	memset(reqv, 0, sizeof(reqv));
 
 	while(isRun) {
 		sigprocmask(SIG_BLOCK, &waitset, NULL);
@@ -3044,9 +3049,20 @@ consult the installation file that came with this distribution, or visit \n\
 	    reqs = requests; // complete of requests
 	    nreqs = nrequests; // running of requests
 		requests = 0;
-    	pthread_mutex_unlock(&lock);    
+    	pthread_mutex_unlock(&lock);
+    	
+    	reqc -= reqv[reqi];
+    	reqc += reqs;
+    	reqv[reqi++] = reqs;
+    	
+    	if(reqi == REQC) {
+    		reqi = 0;
+    		reqn = REQC;
+    	} else if(reqn < REQC) {
+    		reqn = reqi;
+    	}
 
-		fprintf(stderr, "[%s] STAT: Running %u requests, completed %u requests/second, %u nthreads\n", gettimeofstr(), nreqs, reqs, nthreads);
+		fprintf(stderr, "[%s] STAT: Running %u requests, completed %u requests/second, avg %.1f requests/second, %u nthreads\n", gettimeofstr(), nreqs, reqs, (float) reqc / (float) reqn, nthreads);
 		fflush(stderr);
 	}
 
