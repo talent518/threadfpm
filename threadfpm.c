@@ -217,14 +217,13 @@ typedef struct _php_cgi_globals_struct {
  */
 typedef struct _user_config_cache_entry {
 	time_t expires;
-	HashTable *user_config;
+	HashTable user_config;
 } user_config_cache_entry;
 
 static void user_config_cache_entry_dtor(zval *el)
 {
 	user_config_cache_entry *entry = (user_config_cache_entry *)Z_PTR_P(el);
-	zend_hash_destroy(entry->user_config);
-	free(entry->user_config);
+	zend_hash_destroy(&entry->user_config);
 	free(entry);
 }
 /* }}} */
@@ -705,8 +704,7 @@ static void php_cgi_ini_activate_user_config(char *path, int path_len, const cha
 	if (!entry) {
 		entry = pemalloc(sizeof(user_config_cache_entry), 1);
 		entry->expires = 0;
-		entry->user_config = (HashTable *) pemalloc(sizeof(HashTable), 1);
-		zend_hash_init(entry->user_config, 0, NULL, config_zval_dtor, 1);
+		zend_hash_init(&entry->user_config, 0, NULL, config_zval_dtor, 1);
 		zend_hash_str_update_ptr(&CGIG(user_config_cache), path, path_len, entry);
 	}
 
@@ -718,7 +716,7 @@ static void php_cgi_ini_activate_user_config(char *path, int path_len, const cha
 		int s_len;
 
 		/* Clear the expired config */
-		zend_hash_clean(entry->user_config);
+		zend_hash_clean(&entry->user_config);
 
 		if (!IS_ABSOLUTE_PATH(path, path_len)) {
 			real_path = tsrm_realpath(path, NULL);
@@ -748,19 +746,19 @@ static void php_cgi_ini_activate_user_config(char *path, int path_len, const cha
 			ptr = s2 + doc_root_len;
 			while ((ptr = strchr(ptr, DEFAULT_SLASH)) != NULL) {
 				*ptr = 0;
-				php_parse_user_ini_file(path, PG(user_ini_filename), entry->user_config);
+				php_parse_user_ini_file(path, PG(user_ini_filename), &entry->user_config);
 				*ptr = '/';
 				ptr++;
 			}
 		} else {
-			php_parse_user_ini_file(path, PG(user_ini_filename), entry->user_config);
+			php_parse_user_ini_file(path, PG(user_ini_filename), &entry->user_config);
 		}
 
 		entry->expires = request_time + PG(user_ini_cache_ttl);
 	}
 
 	/* Activate ini entries with values from the user config hash */
-	php_ini_activate_config(entry->user_config, PHP_INI_PERDIR, PHP_INI_STAGE_HTACCESS);
+	php_ini_activate_config(&entry->user_config, PHP_INI_PERDIR, PHP_INI_STAGE_HTACCESS);
 }
 /* }}} */
 
@@ -1435,12 +1433,22 @@ static void php_cgi_globals_ctor(php_cgi_globals_struct *php_cgi_globals)
 }
 /* }}} */
 
+/* {{{ php_cgi_globals_dtor
+ */
+static void php_cgi_globals_dtor(php_cgi_globals_struct *php_cgi_globals)
+{
+	// php_cgi_globals->redirect_status_env = NULL;
+	// php_cgi_globals->error_header = NULL;
+	zend_hash_destroy(&php_cgi_globals->user_config_cache);
+}
+/* }}} */
+
 /* {{{ PHP_MINIT_FUNCTION
  */
 static PHP_MINIT_FUNCTION(cgi)
 {
 #ifdef ZTS
-	ts_allocate_id(&php_cgi_globals_id, sizeof(php_cgi_globals_struct), (ts_allocate_ctor) php_cgi_globals_ctor, NULL);
+	ts_allocate_id(&php_cgi_globals_id, sizeof(php_cgi_globals_struct), (ts_allocate_ctor) php_cgi_globals_ctor, (ts_allocate_dtor) php_cgi_globals_dtor);
 #else
 	php_cgi_globals_ctor(&php_cgi_globals);
 #endif
@@ -1453,7 +1461,9 @@ static PHP_MINIT_FUNCTION(cgi)
  */
 static PHP_MSHUTDOWN_FUNCTION(cgi)
 {
-	zend_hash_destroy(&CGIG(user_config_cache));
+#ifndef ZTS
+	php_cgi_globals_dtor(&php_cgi_globals);
+#endif
 
 	UNREGISTER_INI_ENTRIES();
 	return SUCCESS;
