@@ -2252,6 +2252,7 @@ static void share_var_destory()
 	pthread_mutex_destroy(&share_var_rlock);
 	pthread_mutex_destroy(&share_var_wlock);
 	hash_table_destroy(share_var_ht);
+	free(share_var_ht);
 	share_var_ht = NULL;
 }
 
