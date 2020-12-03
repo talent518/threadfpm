@@ -1518,29 +1518,30 @@ static pthread_mutex_t share_var_wlock;
 static int share_var_locks = 0;
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_share_var_exists, 0, 0, 1)
-ZEND_ARG_INFO(0, key)
+ZEND_ARG_VARIADIC_INFO(0, keys)
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_share_var_get, 0, 0, 0)
-ZEND_ARG_INFO(0, key)
+ZEND_ARG_VARIADIC_INFO(0, keys)
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_share_var_put, 0, 0, 1)
-ZEND_ARG_INFO(0, key)
+ZEND_ARG_VARIADIC_INFO(0, keys)
+ZEND_ARG_INFO(0, value)
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_share_var_inc, 0, 0, 2)
-ZEND_ARG_INFO(0, key)
+ZEND_ARG_VARIADIC_INFO(0, keys)
 ZEND_ARG_INFO(0, value)
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_share_var_set, 0, 0, 2)
-ZEND_ARG_INFO(0, key)
+ZEND_ARG_VARIADIC_INFO(0, keys)
 ZEND_ARG_INFO(0, value)
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_share_var_del, 0, 0, 1)
-ZEND_ARG_INFO(0, key)
+ZEND_ARG_VARIADIC_INFO(0, keys)
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_share_var_clean, 0, 0, 0)
