@@ -2621,7 +2621,9 @@ static zend_bool create_thread(void*(*handler)(void*), void* arg) {
 	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 	ret = pthread_create(&thread, &attr, handler, arg);
 	if(ret) {
+		errno = ret;
 		perror("pthread_create() is error");
+		errno = 0;
 	} else {
 		sem_wait(&wsem);
 	}
