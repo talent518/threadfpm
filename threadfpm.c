@@ -22,6 +22,7 @@
 */
 
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "php.h"
 #include "php_globals.h"
@@ -2403,7 +2404,7 @@ static zend_bool isRealpath = 0;
 static int idleseconds = 5;
 
 static int max_threads = 64;
-static unsigned long int argid = 0;
+static unsigned long int req_id = 0;
 static unsigned long int max_requests = 10000000;
 
 static void *thread_request(void*_) {
@@ -2654,7 +2655,7 @@ static void *thread_accept(void*_) {
 	while(isRun) {
 		arg = (thread_arg_t*)malloc(sizeof(thread_arg_t));
 		pthread_mutex_lock(&lock);
-		arg->id = argid++;
+		arg->id = req_id++;
 		pthread_mutex_unlock(&lock);
 		arg->request = fcgi_init_request(fcgi_fd, on_accept, on_read, on_close);
 		arg->t = microtime();
@@ -2762,7 +2763,8 @@ int main(int argc, char *argv[])
 
 	char *pidfile = NULL;
 
-	unsigned int reqs, nreqs;
+	unsigned int reqs, nreqs, threads, accepts;
+	unsigned long int max_reqs = 0;
 	
 	const int REQC = 10;
 	unsigned int reqv[REQC], reqc = 0, reqi = 0, reqn = 0;
@@ -2927,9 +2929,9 @@ int main(int argc, char *argv[])
 				break;
 				
 			case 'r':
-				max_requests = atoi(php_optarg);
-				if(max_requests < 1) {
-					max_requests = 1;
+				max_requests = strtol(php_optarg, NULL, 10);
+				if(max_requests < 100) {
+					max_requests = 100;
 				}
 				break;
 
@@ -3132,6 +3134,8 @@ consult the installation file that came with this distribution, or visit \n\
 	    reqs = requests; // complete of requests
 	    nreqs = nrequests; // running of requests
 		requests = 0;
+		threads = nthreads;
+		accepts = naccepts;
     	pthread_mutex_unlock(&lock);
     	
     	reqc -= reqv[reqi];
@@ -3145,8 +3149,16 @@ consult the installation file that came with this distribution, or visit \n\
     		reqn = reqi;
     	}
 
-		fprintf(stderr, "[%s] STAT: Running %u requests, completed %u requests/second, avg %.1f requests/second, %u nthreads\n", gettimeofstr(), nreqs, reqs, (float) reqc / (float) reqn, nthreads);
+		fprintf(stderr, "[%s] STAT: Running %u requests, completed %u requests/second, avg %.1f requests/second, %u worker threads, %u accept threads\n", gettimeofstr(), nreqs, reqs, (float) reqc / (float) reqn, threads, accepts);
 		fflush(stderr);
+		
+		max_reqs += reqs;
+		
+		if(threads == 0 && max_reqs >= max_requests) {
+			isRun = 0;
+			isReload = 1;
+			break;
+		}
 	}
 
 	shutdown(fcgi_fd, SHUT_RDWR);
