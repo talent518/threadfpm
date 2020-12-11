@@ -2417,12 +2417,12 @@ static void *thread_request(void*_) {
 	double t;
 	struct timespec ts;
 	char path[PATH_MAX];
-	
-	sem_post(&wsem);
 
 	thread_sigmask();
 
 	ts_resource(0);
+	
+	sem_wait(&wsem);
 
 	dprintf("thread begin\n");
 
@@ -2625,7 +2625,7 @@ static zend_bool create_thread(void*(*handler)(void*), void* arg) {
 		perror("pthread_create() is error");
 		errno = 0;
 	} else {
-		sem_wait(&wsem);
+		sem_post(&wsem);
 	}
 	pthread_attr_destroy(&attr);
 
@@ -2641,11 +2641,11 @@ static void *thread_accept(void*_) {
 	naccepts++;
 	pthread_mutex_unlock(&lock);
 
-	sem_post(&wsem);
-
 	thread_sigmask();
 
 	ts_resource(0);
+
+	sem_wait(&wsem);
 	
 	CGIG(is_accept) = 1;
 	
