@@ -32,6 +32,7 @@ typedef enum {
 
 typedef struct value_t {
 	type_t type;
+	int expire;
 	union {
 		zend_bool b;
 		char c;
@@ -145,7 +146,6 @@ ulong hash_table_next_free_element(const hash_table_t *ht);
 
 int hash_table_num_elements(const hash_table_t *ht);
 
-int hash_table_rehash(hash_table_t *ht);
 void hash_table_reindex(hash_table_t *ht, zend_bool only_integer_keys);
 
 ulong hash_table_func(const char *arKey, uint nKeyLength);
