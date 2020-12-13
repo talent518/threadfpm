@@ -2355,7 +2355,7 @@ int share_var_clean_ex()
 {
 	int n;
 	
-	if(!share_var_ht) return;
+	if(!share_var_ht) return 0;
 	
 	SHARE_VAR_WLOCK();
 	n = (int) time(NULL);
