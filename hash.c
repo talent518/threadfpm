@@ -77,6 +77,7 @@
 void hash_table_value_free(value_t *value) {
 	switch(value->type) {
 	case STR_T:
+	case SERI_T:
 		free(value->str);
 		break;
 	case HT_T:
@@ -89,9 +90,10 @@ void hash_table_value_free(value_t *value) {
 		break;
 	}
 	value->type = NULL_T;
+	value->expire = 0;
 }
 
-int hash_table_rehash(hash_table_t *ht) {
+static zend_always_inline int hash_table_rehash(hash_table_t *ht) {
 	register bucket_t *p;
 	register uint nIndex;
 
@@ -185,7 +187,7 @@ ulong hash_table_func(register const char *arKey, register uint nKeyLength) {
 
 static const bucket_t *uninitialized_bucket = NULL;
 
-static zend_always_inline void i_hash_table_bucket_delete(hash_table_t *ht, bucket_t *p) {
+static zend_always_inline void hash_table_bucket_delete(hash_table_t *ht, bucket_t *p) {
 	if (p->pLast) {
 		p->pLast->pNext = p->pNext;
 	} else {
@@ -214,10 +216,6 @@ static zend_always_inline void i_hash_table_bucket_delete(hash_table_t *ht, buck
 		ht->pDestructor(&p->value);
 	}
 	free(p);
-}
-
-static void hash_table_bucket_delete(hash_table_t *ht, bucket_t *p) {
-	i_hash_table_bucket_delete(ht, p);
 }
 
 int _hash_table_init(hash_table_t *ht, uint nSize, hash_dtor_func_t pDestructor, zend_bool bApplyProtection) {
@@ -390,7 +388,7 @@ int hash_table_del_key_or_index(hash_table_t *ht, const char *arKey, uint nKeyLe
 	while (p != NULL) {
 		if ((p->h == h) && (p->nKeyLength == nKeyLength) && ((p->nKeyLength == 0) /* Numeric index (short circuits the memcmp() check) */
 		|| !memcmp(p->arKey, arKey, nKeyLength))) { /* String index */
-			i_hash_table_bucket_delete(ht, p);
+			hash_table_bucket_delete(ht, p);
 			return SUCCESS;
 		}
 		p = p->pNext;
