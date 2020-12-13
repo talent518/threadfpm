@@ -406,21 +406,21 @@ static int sapi_cgi_send_headers(sapi_headers_struct *sapi_headers) /* {{{ */
 	sapi_header_struct *h;
 	zend_llist_position pos;
 	zend_bool ignore_status = 0;
-	int response_status = SG(sapi_headers).http_response_code;
+	int response_status = sapi_headers->http_response_code;
 
 	if (SG(request_info).no_headers == 1) {
 		return  SAPI_HEADER_SENT_SUCCESSFULLY;
 	}
 
-	if (CGIG(nph) || SG(sapi_headers).http_response_code != 200)
+	if (CGIG(nph) || sapi_headers->http_response_code != 200)
 	{
 		int len;
 		zend_bool has_status = 0;
 
-		if (CGIG(rfc2616_headers) && SG(sapi_headers).http_status_line) {
+		if (CGIG(rfc2616_headers) && sapi_headers->http_status_line) {
 			char *s;
-			len = slprintf(buf, SAPI_CGI_MAX_HEADER_LENGTH, "%s\r\n", SG(sapi_headers).http_status_line);
-			if ((s = strchr(SG(sapi_headers).http_status_line, ' '))) {
+			len = slprintf(buf, SAPI_CGI_MAX_HEADER_LENGTH, "%s\r\n", sapi_headers->http_status_line);
+			if ((s = strchr(sapi_headers->http_status_line, ' '))) {
 				response_status = atoi((s + 1));
 			}
 
@@ -431,10 +431,10 @@ static int sapi_cgi_send_headers(sapi_headers_struct *sapi_headers) /* {{{ */
 		} else {
 			char *s;
 
-			if (SG(sapi_headers).http_status_line &&
-				(s = strchr(SG(sapi_headers).http_status_line, ' ')) != 0 &&
-				(s - SG(sapi_headers).http_status_line) >= 5 &&
-				strncasecmp(SG(sapi_headers).http_status_line, "HTTP/", 5) == 0
+			if (sapi_headers->http_status_line &&
+				(s = strchr(sapi_headers->http_status_line, ' ')) != 0 &&
+				(s - sapi_headers->http_status_line) >= 5 &&
+				strncasecmp(sapi_headers->http_status_line, "HTTP/", 5) == 0
 			) {
 				len = slprintf(buf, sizeof(buf), "Status:%s\r\n", s);
 				response_status = atoi((s + 1));
@@ -453,15 +453,15 @@ static int sapi_cgi_send_headers(sapi_headers_struct *sapi_headers) /* {{{ */
 					http_response_status_code_pair *err = (http_response_status_code_pair*)http_status_map;
 
 					while (err->code != 0) {
-						if (err->code == SG(sapi_headers).http_response_code) {
+						if (err->code == sapi_headers->http_response_code) {
 							break;
 						}
 						err++;
 					}
 					if (err->str) {
-						len = slprintf(buf, sizeof(buf), "Status: %d %s\r\n", SG(sapi_headers).http_response_code, err->str);
+						len = slprintf(buf, sizeof(buf), "Status: %d %s\r\n", sapi_headers->http_response_code, err->str);
 					} else {
-						len = slprintf(buf, sizeof(buf), "Status: %d\r\n", SG(sapi_headers).http_response_code);
+						len = slprintf(buf, sizeof(buf), "Status: %d\r\n", sapi_headers->http_response_code);
 					}
 				}
 			}
@@ -600,20 +600,21 @@ static void cgi_php_load_env_var(char *var, unsigned int var_len, char *val, uns
 void cgi_php_import_environment_variables(zval *array_ptr) /* {{{ */
 {
 	fcgi_request *request = NULL;
+	zval *zg = PG(http_globals);
 
-	if (Z_TYPE(PG(http_globals)[TRACK_VARS_ENV]) == IS_ARRAY &&
-		Z_ARR_P(array_ptr) != Z_ARR(PG(http_globals)[TRACK_VARS_ENV]) &&
-		zend_hash_num_elements(Z_ARRVAL(PG(http_globals)[TRACK_VARS_ENV])) > 0
+	if (Z_TYPE(zg[TRACK_VARS_ENV]) == IS_ARRAY &&
+		Z_ARR_P(array_ptr) != Z_ARR(zg[TRACK_VARS_ENV]) &&
+		zend_hash_num_elements(Z_ARRVAL(zg[TRACK_VARS_ENV])) > 0
 	) {
 		zend_array_destroy(Z_ARR_P(array_ptr));
-		Z_ARR_P(array_ptr) = zend_array_dup(Z_ARR(PG(http_globals)[TRACK_VARS_ENV]));
+		Z_ARR_P(array_ptr) = zend_array_dup(Z_ARR(zg[TRACK_VARS_ENV]));
 		return;
-	} else if (Z_TYPE(PG(http_globals)[TRACK_VARS_SERVER]) == IS_ARRAY &&
-		Z_ARR_P(array_ptr) != Z_ARR(PG(http_globals)[TRACK_VARS_SERVER]) &&
-		zend_hash_num_elements(Z_ARRVAL(PG(http_globals)[TRACK_VARS_SERVER])) > 0
+	} else if (Z_TYPE(zg[TRACK_VARS_SERVER]) == IS_ARRAY &&
+		Z_ARR_P(array_ptr) != Z_ARR(zg[TRACK_VARS_SERVER]) &&
+		zend_hash_num_elements(Z_ARRVAL(zg[TRACK_VARS_SERVER])) > 0
 	) {
 		zend_array_destroy(Z_ARR_P(array_ptr));
-		Z_ARR_P(array_ptr) = zend_array_dup(Z_ARR(PG(http_globals)[TRACK_VARS_SERVER]));
+		Z_ARR_P(array_ptr) = zend_array_dup(Z_ARR(zg[TRACK_VARS_SERVER]));
 		return;
 	}
 
@@ -658,7 +659,8 @@ static void sapi_cgi_register_variables(zval *track_vars_array) /* {{{ */
 		}
 		efree(php_self);
 	} else {
-		php_self = SG(request_info).request_uri ? SG(request_info).request_uri : "";
+		php_self = SG(request_info).request_uri;
+		if(!php_self) php_self = "";
 		php_self_len = strlen(php_self);
 		if (sapi_module.input_filter(PARSE_SERVER, "PHP_SELF", &php_self, php_self_len, &php_self_len)) {
 			php_register_variable_safe("PHP_SELF", php_self, php_self_len, track_vars_array);
@@ -1044,6 +1046,7 @@ static void init_request_info(void)
 	char *env_path_translated = FCGI_GETENV(request, "PATH_TRANSLATED");
 	char *script_path_translated = env_script_filename;
 	int apache_was_here = 0;
+	sapi_request_info *request_info = &SG(request_info);
 
 	/* some broken servers do not have script_filename or argv0
 	 * an example, IIS configured in some ways.  then they do more
@@ -1053,13 +1056,13 @@ static void init_request_info(void)
 	}
 
 	/* initialize the defaults */
-	SG(request_info).path_translated = NULL;
-	SG(request_info).request_method = NULL;
-	SG(request_info).proto_num = 1000;
-	SG(request_info).query_string = NULL;
-	SG(request_info).request_uri = NULL;
-	SG(request_info).content_type = NULL;
-	SG(request_info).content_length = 0;
+	request_info->path_translated = NULL;
+	request_info->request_method = NULL;
+	request_info->proto_num = 1000;
+	request_info->query_string = NULL;
+	request_info->request_uri = NULL;
+	request_info->content_type = NULL;
+	request_info->content_length = 0;
 	SG(sapi_headers).http_response_code = 200;
 
 	/* script_path_translated being set is a good indication that
@@ -1238,9 +1241,9 @@ static void init_request_info(void)
 										if (orig_script_name) {
 											FCGI_PUTENV(request, "ORIG_SCRIPT_NAME", orig_script_name);
 										}
-										SG(request_info).request_uri = FCGI_PUTENV(request, "SCRIPT_NAME", env_path_info);
+										request_info->request_uri = FCGI_PUTENV(request, "SCRIPT_NAME", env_path_info);
 									} else {
-										SG(request_info).request_uri = orig_script_name;
+										request_info->request_uri = orig_script_name;
 									}
 									path_info[0] = old;
 								} else if (apache_was_here && env_script_name) {
@@ -1252,7 +1255,7 @@ static void init_request_info(void)
 									if (snlen>slen && !strcmp(env_script_name+snlen-slen, path_info)) {
 										FCGI_PUTENV(request, "ORIG_SCRIPT_NAME", orig_script_name);
 										env_script_name[snlen-slen] = 0;
-										SG(request_info).request_uri = FCGI_PUTENV(request, "SCRIPT_NAME", env_script_name);
+										request_info->request_uri = FCGI_PUTENV(request, "SCRIPT_NAME", env_script_name);
 									}
 								}
 								env_path_info = FCGI_PUTENV(request, "PATH_INFO", path_info);
@@ -1333,15 +1336,15 @@ static void init_request_info(void)
 					script_path_translated = FCGI_PUTENV(request, "SCRIPT_FILENAME", NULL);
 					SG(sapi_headers).http_response_code = 404;
 				}
-				if (!SG(request_info).request_uri) {
+				if (!request_info->request_uri) {
 					if (!orig_script_name ||
 						strcmp(orig_script_name, env_script_name) != 0) {
 						if (orig_script_name) {
 							FCGI_PUTENV(request, "ORIG_SCRIPT_NAME", orig_script_name);
 						}
-						SG(request_info).request_uri = FCGI_PUTENV(request, "SCRIPT_NAME", env_script_name);
+						request_info->request_uri = FCGI_PUTENV(request, "SCRIPT_NAME", env_script_name);
 					} else {
-						SG(request_info).request_uri = orig_script_name;
+						request_info->request_uri = orig_script_name;
 					}
 				}
 				if (pt) {
@@ -1373,18 +1376,18 @@ static void init_request_info(void)
 					if (orig_script_name) {
 						FCGI_PUTENV(request, "ORIG_SCRIPT_NAME", orig_script_name);
 					}
-					SG(request_info).request_uri = FCGI_PUTENV(request, "SCRIPT_NAME", env_script_name);
+					request_info->request_uri = FCGI_PUTENV(request, "SCRIPT_NAME", env_script_name);
 				} else {
-					SG(request_info).request_uri = env_script_name;
+					request_info->request_uri = env_script_name;
 				}
 				efree(real_path);
 			}
 		} else {
 			/* pre 4.3 behaviour, shouldn't be used but provides BC */
 			if (env_path_info) {
-				SG(request_info).request_uri = env_path_info;
+				request_info->request_uri = env_path_info;
 			} else {
-				SG(request_info).request_uri = env_script_name;
+				request_info->request_uri = env_script_name;
 			}
 			if (!CGIG(discard_path) && env_path_translated) {
 				script_path_translated = env_path_translated;
@@ -1392,14 +1395,14 @@ static void init_request_info(void)
 		}
 
 		if (is_valid_path(script_path_translated)) {
-			SG(request_info).path_translated = estrdup(script_path_translated);
+			request_info->path_translated = estrdup(script_path_translated);
 		}
 
-		SG(request_info).request_method = FCGI_GETENV(request, "REQUEST_METHOD");
+		request_info->request_method = FCGI_GETENV(request, "REQUEST_METHOD");
 		/* FIXME - Work out proto_num here */
-		SG(request_info).query_string = FCGI_GETENV(request, "QUERY_STRING");
-		SG(request_info).content_type = (content_type ? content_type : "" );
-		SG(request_info).content_length = (content_length ? atol(content_length) : 0);
+		request_info->query_string = FCGI_GETENV(request, "QUERY_STRING");
+		request_info->content_type = (content_type ? content_type : "" );
+		request_info->content_length = (content_length ? atol(content_length) : 0);
 
 		/* The CGI RFC allows servers to pass on unvalidated Authorization data */
 		auth = FCGI_GETENV(request, "HTTP_AUTHORIZATION");
@@ -2498,12 +2501,13 @@ typedef struct _thread_arg_t {
 
 static int fcgi_fd = 0;
 static unsigned int nthreads = 0, naccepts = 0;
-static pthread_mutex_t lock;
+static pthread_mutex_t lock, wlock;
 static pthread_cond_t cond;
 static sem_t rsem, wsem;
 static unsigned int nrequests = 0;
 static unsigned int requests = 0;
 static thread_arg_t *head_request = NULL, *tail_request = NULL;
+static thread_arg_t *head_wait = NULL, *tail_wait = NULL;
 static zend_bool isRun = 1;
 static zend_bool isReload = 0;
 static zend_bool isAccess = 0;
@@ -2516,15 +2520,15 @@ static unsigned long int max_requests = 10000000;
 
 static void *thread_request(void*_) {
 	thread_arg_t *arg;
-	char *primary_script = NULL;
 	zend_file_handle file_handle;
 	char reqinfo[4096];
 	char pidstr[20], tidstr[20];
 	size_t pidlen = snprintf(pidstr, sizeof(pidstr), "Pid: %d", pthread_pid);
 	size_t tidlen = snprintf(tidstr, sizeof(tidstr), "Tid: %d", pthread_tid);
-	double t;
+	double t, t2, t3;
 	struct timespec ts;
 	char path[PATH_MAX];
+	sapi_request_info *request_info;
 
 	thread_sigmask();
 
@@ -2533,6 +2537,8 @@ static void *thread_request(void*_) {
 	sem_wait(&wsem);
 
 	dprintf("thread begin\n");
+
+	request_info = &SG(request_info);
 
 	while(1) {
 		if(!clock_gettime(CLOCK_REALTIME, &ts)) {
@@ -2575,12 +2581,12 @@ static void *thread_request(void*_) {
 
 		/* check if request_method has been sent.
 		 * if not, it's certainly not an HTTP over fcgi request */
-		if (UNEXPECTED(!SG(request_info).request_method)) {
+		if (UNEXPECTED(!request_info->request_method)) {
 			goto fastcgi_request_done;
 		}
 
 		/* If path_translated is NULL, terminate here with a 404 */
-		if (UNEXPECTED(!SG(request_info).path_translated)) {
+		if (UNEXPECTED(!request_info->path_translated)) {
 			zend_first_try {
 				fprintf(stderr, "Primary script unknown\n");
 				SG(sapi_headers).http_response_code = 404;
@@ -2593,7 +2599,7 @@ static void *thread_request(void*_) {
 	#ifndef THREADFPM_DEBUG
 		if(UNEXPECTED(isAccess)) {
 	#endif
-			snprintf(reqinfo, sizeof(reqinfo), "[%s] %s %s %s %ld", FCGI_GETENV(arg->request, "SERVER_NAME"), FCGI_GETENV(arg->request, "REMOTE_ADDR"), SG(request_info).request_method, FCGI_GETENV(arg->request, "REQUEST_URI"), SG(request_info).content_length);
+			snprintf(reqinfo, sizeof(reqinfo), "[%s] %s %s %s %ld", FCGI_GETENV(arg->request, "SERVER_NAME"), FCGI_GETENV(arg->request, "REMOTE_ADDR"), request_info->request_method, FCGI_GETENV(arg->request, "REQUEST_URI"), request_info->content_length);
 
 	#ifndef THREADFPM_DEBUG
 		}
@@ -2603,19 +2609,19 @@ static void *thread_request(void*_) {
 			sapi_add_header(pidstr, pidlen, 1);
 			sapi_add_header(tidstr, tidlen, 1);
 		}
-		
-		if(isRealpath) {
-			if(realpath(SG(request_info).path_translated, path)) {
-				efree(SG(request_info).path_translated);
-				SG(request_info).path_translated = estrdup(path);
-			} else {
-				goto noexists;
-			}
-		}
 
-		if (UNEXPECTED(php_fopen_primary_script(&file_handle) == FAILURE)) {
-			noexists:
-			zend_first_try {
+		zend_first_try {
+			if(isRealpath) {
+				if(realpath(request_info->path_translated, path)) {
+					efree(request_info->path_translated);
+					request_info->path_translated = estrdup(path);
+				} else {
+					goto noexists;
+				}
+			}
+
+			if (UNEXPECTED(php_fopen_primary_script(&file_handle) == FAILURE)) {
+				noexists:
 				if (errno == EACCES) {
 					SG(sapi_headers).http_response_code = 403;
 					PUTS("Access denied.\n");
@@ -2623,12 +2629,9 @@ static void *thread_request(void*_) {
 					SG(sapi_headers).http_response_code = 404;
 					PUTS("No input file specified.\n");
 				}
-			} zend_end_try();
-			goto fastcgi_request_done;
-		}
-
-		zend_first_try {
-			php_execute_script(&file_handle);
+			} else {
+				php_execute_script(&file_handle);
+			}
 		} zend_end_try();
 
 	fastcgi_request_done:
@@ -2636,10 +2639,6 @@ static void *thread_request(void*_) {
 			close(CGIG(body_fd));
 		}
 		CGIG(body_fd) = -2;
-
-		if (EXPECTED(primary_script)) {
-			efree(primary_script);
-		}
 
 		if (UNEXPECTED(EG(exit_status) == 255)) {
 			if (CGIG(error_header) && *CGIG(error_header)) {
@@ -2651,38 +2650,46 @@ static void *thread_request(void*_) {
 			}
 		}
 
-		efree(SG(request_info).path_translated);
-		SG(request_info).path_translated = NULL;
+		efree(request_info->path_translated);
+		request_info->path_translated = NULL;
 
 		php_request_shutdown((void *) 0);
 
+	err:
+		t2 = microtime();
+		
 		pthread_mutex_lock(&lock);
 		requests++;
+		nrequests--;
 		pthread_mutex_unlock(&lock);
 
-		fcgi_finish_request(arg->request, 0);
-		
 		if(!fcgi_is_closed(arg->request)) {
 			dprintf("is closed\n");
 			zend_first_try {
 				fcgi_accept_request(arg->request);
 			} zend_end_try();
 		}
+		
+		t3 = microtime();
 
 		if(UNEXPECTED(isAccess)) {
-			dprintf("%s %lu %.3fms + %.3fms\n", reqinfo, CGIG(response_length), microtime() - t, t - arg->t);
-			printf("[%s] %d %s %lu %.3fms + %.3fms\n", gettimeofstr(), pthread_tid, reqinfo, CGIG(response_length), microtime() - t, t - arg->t);
+			dprintf("%s %lu %.3fms + %.3fms + %.3fms\n", reqinfo, CGIG(response_length), t2 - t, t3 - t2, t - arg->t);
+			printf("[%s] %d %s %lu %.3fms + %.3fms + %.3fms\n", gettimeofstr(), pthread_tid, reqinfo, CGIG(response_length), t2 - t, t3 - t2, t - arg->t);
 			fflush(stdout);
 		}
 
-	err:
-		fcgi_finish_request(arg->request, 1);
-		fcgi_destroy_request(arg->request);
-		free(arg);
+		arg->fd = -1;
+		arg->next = NULL;
 		
-		pthread_mutex_lock(&lock);
-		nrequests--;
-		pthread_mutex_unlock(&lock);
+		pthread_mutex_lock(&wlock);
+		if(head_wait) {
+			arg->next = head_wait;
+			head_wait = arg;
+		} else {
+			head_wait = arg;
+			tail_wait = arg;
+		}
+		pthread_mutex_unlock(&wlock);
 	}
 
 	dprintf("thread end\n");
@@ -2760,17 +2767,29 @@ static void *thread_accept(void*_) {
 	dprintf("thread begin\n");
 
 	while(isRun) {
-		arg = (thread_arg_t*)malloc(sizeof(thread_arg_t));
-		pthread_mutex_lock(&lock);
-		arg->id = req_id++;
-		pthread_mutex_unlock(&lock);
-		arg->request = fcgi_init_request(fcgi_fd, on_accept, on_read, on_close);
+		pthread_mutex_lock(&wlock);
+		arg = head_wait;
+		if(arg) {
+			if(arg == tail_wait) {
+				head_wait = NULL;
+				tail_wait = NULL;
+			} else {
+				head_wait = arg->next;
+			}
+			arg->id = req_id++;
+		}
+		pthread_mutex_unlock(&wlock);
+
+		if(arg == NULL) {
+			usleep(100);
+			continue;
+		}
+
 		arg->t = microtime();
+		arg->next = NULL;
 		arg->fd = fcgi_accept_request(arg->request);
 		
 		if(arg->fd <= 0) {
-			fcgi_destroy_request(arg->request);
-			free(arg);
 			break;
 		}
 
@@ -2778,7 +2797,6 @@ static void *thread_accept(void*_) {
 
 		pthread_mutex_lock(&lock);
 		nrequests++;
-		arg->next = NULL;
 		if(tail_request) {
 			tail_request->next = arg;
 			tail_request = arg;
@@ -2870,10 +2888,12 @@ int main(int argc, char *argv[])
 
 	char *pidfile = NULL;
 
-	unsigned int reqs, nreqs, threads, accepts;
+	unsigned int reqs, nreqs, threads, accepts, nwaits;
 	unsigned long int max_reqs = 0;
 	double t;
 	
+	thread_arg_t *wargs;
+
 	const int REQC = 10;
 	unsigned int reqv[REQC], reqc = 0, reqi = 0, reqn = 0;
 
@@ -3207,6 +3227,7 @@ consult the installation file that came with this distribution, or visit \n\
 	php_import_environment_variables = cgi_php_import_environment_variables;
 
 	pthread_mutex_init(&lock, NULL);
+	pthread_mutex_init(&wlock, NULL);
 	pthread_cond_init(&cond, NULL);
 	sem_init(&rsem, 0, 0);
 	sem_init(&wsem, 0, 0);
@@ -3221,6 +3242,23 @@ consult the installation file that came with this distribution, or visit \n\
 	sigaddset(&waitset, SIGUSR1);
 	sigaddset(&waitset, SIGUSR2);
 	
+	nwaits = max_accepts + max_threads * 2 + backlog;
+	wargs = (thread_arg_t*)malloc(sizeof(thread_arg_t) * nwaits);
+	head_wait = &wargs[0];
+	wargs[0].request = fcgi_init_request(fcgi_fd, on_accept, on_read, on_close);
+	wargs[0].fd = -1;
+	wargs[0].id = 0;
+	wargs[0].t = 0;
+	for(c=1; c<nwaits; c++) {
+		wargs[c].request = fcgi_init_request(fcgi_fd, on_accept, on_read, on_close);
+		wargs[c].fd = -1;
+		wargs[c].id = 0;
+		wargs[c].t = 0;
+		wargs[c-1].next = &wargs[c];
+	}
+	tail_wait = &wargs[nwaits-1];
+	tail_wait->next = NULL;
+
 	for(ret=0; ret<max_accepts; ret++) {
 		create_thread(thread_accept, NULL + ret);
 	}
@@ -3280,6 +3318,15 @@ consult the installation file that came with this distribution, or visit \n\
 	while(nthreads > 0 || naccepts > 0) pthread_cond_wait(&cond, &lock);
 	pthread_mutex_unlock(&lock);
 
+	for(c=0; c<nwaits; c++) {
+		fcgi_destroy_request(wargs[c].request);
+		if(wargs[c].fd > 0) {
+			shutdown(wargs[c].fd, SHUT_RDWR);
+			close(wargs[c].fd);
+		}
+	}
+	free(wargs);
+
 	fprintf(stderr, "[%s] The server stoped\n", gettimeofstr());
 	fflush(stderr);
 	
@@ -3295,6 +3342,7 @@ consult the installation file that came with this distribution, or visit \n\
 	}
 
 	pthread_cond_destroy(&cond);
+	pthread_mutex_destroy(&wlock);
 	pthread_mutex_destroy(&lock);
 	sem_destroy(&wsem);
 	sem_destroy(&rsem);
