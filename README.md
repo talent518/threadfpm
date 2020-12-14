@@ -20,4 +20,5 @@ php多线程fastcgi的sapi扩展，优点是占用内存少且稳定，避免出
   * $expire: int 过期时间戳，为0时永不过期
 * 删除共享变量: share_var_del($key1[,...])
 * 清空共享变量: share_var_clean()
+* 统计变量(返回：大于0为数组元素数，小于0为字符长度，true为对象，未找到为null，否则为false): share_var_count([$key1,...])
 
