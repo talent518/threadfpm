@@ -1053,7 +1053,7 @@ static void init_request_info(void)
 
 	/* initialize the defaults */
 	request_info->path_translated = NULL;
-	request_info->request_method = NULL;
+	request_info->request_method = FCGI_GETENV(request, "REQUEST_METHOD");
 	request_info->proto_num = 1000;
 	request_info->query_string = NULL;
 	request_info->request_uri = NULL;
@@ -1061,10 +1061,8 @@ static void init_request_info(void)
 	request_info->content_length = 0;
 	SG(sapi_headers).http_response_code = 200;
 
-	/* script_path_translated being set is a good indication that
-	 * we are running in a cgi environment, since it is always
-	 * null otherwise.  otherwise, the filename
-	 * of the script will be retrieved later via argc/argv */
+	/* if script_path_translated is not set, then there is no point to carry on
+	 * as the response is 404 and there is no further processing. */
 	if (script_path_translated) {
 		const char *auth;
 		char *content_length = FCGI_GETENV(request, "CONTENT_LENGTH");
@@ -1394,7 +1392,6 @@ static void init_request_info(void)
 			request_info->path_translated = estrdup(script_path_translated);
 		}
 
-		request_info->request_method = FCGI_GETENV(request, "REQUEST_METHOD");
 		/* FIXME - Work out proto_num here */
 		request_info->query_string = FCGI_GETENV(request, "QUERY_STRING");
 		request_info->content_type = (content_type ? content_type : "" );
@@ -1608,8 +1605,8 @@ ZEND_END_ARG_INFO()
 		} \
 	} while(0)
 
-#define UNSERIALIZE(s,l,ok) UNSERIALIZE_EX(s,l,__NULL,ok)
-#define UNSERIALIZE_EX(s,l,r,ok) \
+#define UNSERIALIZE(s,l,ok) UNSERIALIZE_EX(s,l,__NULL,ok,__NULL)
+#define UNSERIALIZE_EX(s,l,r,ok,ok2) \
 	do { \
 		php_unserialize_data_t var_hash; \
 		char *__buf = s; \
@@ -1623,7 +1620,7 @@ ZEND_END_ARG_INFO()
 			} \
 			r; \
 		} else { \
-			ok; \
+			ok;ok2; \
 		} \
 		PHP_VAR_UNSERIALIZE_DESTROY(var_hash); \
 	} while(0)
@@ -1710,7 +1707,8 @@ static int hash_table_to_zval(bucket_t *p, zval *a) {
 				break;
 			}
 			case SERI_T: {
-				UNSERIALIZE(p->value.str->str, p->value.str->len, add_index_zval(a, p->h, retval));
+				zval rv;
+				UNSERIALIZE_EX(p->value.str->str, p->value.str->len, __NULL, ZVAL_COPY(&rv, retval), add_index_zval(a, p->h, &rv));
 				break;
 			}
 			case PTR_T:
@@ -1754,7 +1752,8 @@ static int hash_table_to_zval(bucket_t *p, zval *a) {
 				break;
 			}
 			case SERI_T: {
-				UNSERIALIZE(p->value.str->str, p->value.str->len, add_assoc_zval_ex(a, p->arKey, p->nKeyLength, retval));
+				zval rv;
+				UNSERIALIZE_EX(p->value.str->str, p->value.str->len, __NULL, ZVAL_COPY(&rv, retval), add_assoc_zval_ex(a, p->arKey, p->nKeyLength, &rv));
 				break;
 			}
 			case PTR_T:
@@ -1764,6 +1763,49 @@ static int hash_table_to_zval(bucket_t *p, zval *a) {
 	}
 	
 	return HASH_TABLE_APPLY_KEEP;
+}
+
+void value_to_zval(value_t *v, zval *return_value) {
+	switch(v->type) {
+		case BOOL_T:
+			RETVAL_BOOL(v->b);
+			break;
+		case CHAR_T:
+			RETVAL_LONG(v->c);
+			break;
+		case SHORT_T:
+			RETVAL_LONG(v->s);
+			break;
+		case INT_T:
+			RETVAL_LONG(v->i);
+			break;
+		case LONG_T:
+			RETVAL_LONG(v->l);
+			break;
+		case FLOAT_T:
+			RETVAL_DOUBLE(v->f);
+			break;
+		case DOUBLE_T:
+			RETVAL_DOUBLE(v->d);
+			break;
+		case STR_T:
+			RETVAL_STRINGL(v->str->str, v->str->len);
+			break;
+		case HT_T:
+			array_init_size(return_value, hash_table_num_elements(v->ptr));
+			hash_table_apply_with_argument(v->ptr, (hash_apply_func_arg_t) hash_table_to_zval, return_value);
+			break;
+		case SERI_T: {
+			UNSERIALIZE(v->str->str, v->str->len, ZVAL_COPY(return_value, retval));
+			break;
+		}
+		case PTR_T:
+			RETVAL_LONG((zend_long) v->ptr);
+			break;
+		default:
+			RETVAL_NULL();
+			break;
+	}
 }
 
 static PHP_FUNCTION(share_var_get)
@@ -1793,49 +1835,8 @@ static PHP_FUNCTION(share_var_get)
 			convert_to_string(&arguments[0]);
 			if(hash_table_find((hash_table_t*) v1.ptr, Z_STRVAL(arguments[i]), Z_STRLEN(arguments[i]), &v2) == FAILURE) break;
 		}
-		v1 = v2;
-	}
-	if(i == arg_num) {
-		switch(v2.type) {
-			case NULL_T:
-				RETVAL_NULL();
-				break;
-			case BOOL_T:
-				RETVAL_BOOL(v2.b);
-				break;
-			case CHAR_T:
-				RETVAL_LONG(v2.c);
-				break;
-			case SHORT_T:
-				RETVAL_LONG(v2.s);
-				break;
-			case INT_T:
-				RETVAL_LONG(v2.i);
-				break;
-			case LONG_T:
-				RETVAL_LONG(v2.l);
-				break;
-			case FLOAT_T:
-				RETVAL_DOUBLE(v2.f);
-				break;
-			case DOUBLE_T:
-				RETVAL_DOUBLE(v2.d);
-				break;
-			case STR_T:
-				RETVAL_STRINGL(v2.str->str, v2.str->len);
-				break;
-			case HT_T:
-				array_init_size(return_value, hash_table_num_elements(v2.ptr));
-				hash_table_apply_with_argument(v2.ptr, (hash_apply_func_arg_t) hash_table_to_zval, return_value);
-				break;
-			case SERI_T: {
-				UNSERIALIZE(v2.str->str, v2.str->len, ZVAL_COPY(return_value, retval));
-				break;
-			}
-			case PTR_T:
-				RETVAL_LONG((zend_long) v2.ptr);
-				break;
-		}
+		if(i == arg_num - 1) value_to_zval(&v2, return_value);
+		else v1 = v2;
 	}
 	SHARE_VAR_RUNLOCK();
 
@@ -2120,19 +2121,30 @@ static PHP_FUNCTION(share_var_inc)
 				zval_to_value(&arguments[i+1], &v2);
 				if(Z_TYPE(arguments[i]) == IS_LONG) {
 					if(hash_table_index_find((hash_table_t*) v1.ptr, Z_LVAL(arguments[i]), &v3) == FAILURE) {
-						RETVAL_BOOL(hash_table_index_update((hash_table_t*) v1.ptr, Z_LVAL(arguments[i]), &v2, NULL) == SUCCESS);
+						if(hash_table_index_update((hash_table_t*) v1.ptr, Z_LVAL(arguments[i]), &v2, NULL) == SUCCESS) {
+							value_to_zval(&v2, return_value);
+						}
 					} else {
 						value_add(&v3, &v2);
-						if(v3.type != HT_T) RETVAL_BOOL(hash_table_index_update((hash_table_t*) v1.ptr, Z_LVAL(arguments[i]), &v3, NULL) == SUCCESS);
+						if(v3.type != HT_T) {
+							if(hash_table_index_update((hash_table_t*) v1.ptr, Z_LVAL(arguments[i]), &v3, NULL) == SUCCESS) {
+								value_to_zval(&v3, return_value);
+							}
+						} else RETVAL_LONG(hash_table_num_elements(v3.ptr));
 					}
 				} else {
 					h = zend_get_hash_value(Z_STRVAL(arguments[i]), Z_STRLEN(arguments[i]));
 					if(hash_table_quick_find((hash_table_t*) v1.ptr, Z_STRVAL(arguments[i]), Z_STRLEN(arguments[i]), h, &v3) == FAILURE) {
-						RETVAL_BOOL(hash_table_quick_update((hash_table_t*) v1.ptr, Z_STRVAL(arguments[i]), Z_STRLEN(arguments[i]), h, &v2, NULL) == SUCCESS);
+						if(hash_table_quick_update((hash_table_t*) v1.ptr, Z_STRVAL(arguments[i]), Z_STRLEN(arguments[i]), h, &v2, NULL) == SUCCESS) {
+							value_to_zval(&v2, return_value);
+						}
 					} else {
 						value_add(&v3, &v2);
-						if(v3.type != HT_T) RETVAL_BOOL(hash_table_quick_update((hash_table_t*) v1.ptr, Z_STRVAL(arguments[i]), Z_STRLEN(arguments[i]), h, &v3, NULL) == SUCCESS);
-						else RETVAL_TRUE;
+						if(v3.type != HT_T) {
+							if(hash_table_quick_update((hash_table_t*) v1.ptr, Z_STRVAL(arguments[i]), Z_STRLEN(arguments[i]), h, &v3, NULL) == SUCCESS) {
+								value_to_zval(&v3, return_value);
+							}
+						} else RETVAL_LONG(hash_table_num_elements(v3.ptr));
 					}
 				}
 				break;
