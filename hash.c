@@ -93,7 +93,7 @@ void hash_table_value_free(value_t *value) {
 	value->expire = 0;
 }
 
-static zend_always_inline int hash_table_rehash(hash_table_t *ht) {
+static int hash_table_rehash(hash_table_t *ht) {
 	register bucket_t *p;
 	register uint nIndex;
 
@@ -276,13 +276,12 @@ int _hash_table_add_or_update(hash_table_t *ht, const char *arKey, uint nKeyLeng
 	p->nKeyLength = nKeyLength;
 	p->value = *pData;
 	p->h = h;
-	CONNECT_TO_BUCKET_DLLIST(p, ht->arBuckets[nIndex]);
-	if (pDest) {
-		pDest->type = NULL_T;
-	}
+	
+	if (pDest) pDest->type = NULL_T;
 
-	CONNECT_TO_GLOBAL_DLLIST(p, ht);
+	CONNECT_TO_BUCKET_DLLIST(p, ht->arBuckets[nIndex]);
 	ht->arBuckets[nIndex] = p;
+	CONNECT_TO_GLOBAL_DLLIST(p, ht);
 
 	ht->nNumOfElements++;
 	HASH_TABLE_IF_FULL_DO_RESIZE(ht); /* If the Hash table is full, resize it */
@@ -319,10 +318,10 @@ int _hash_table_quick_add_or_update(hash_table_t *ht, const char *arKey, uint nK
 	p->nKeyLength = nKeyLength;
 	p->value = *pData;
 	p->h = h;
+	
 	if (pDest) pDest->type = NULL_T;
 
 	CONNECT_TO_BUCKET_DLLIST(p, ht->arBuckets[nIndex]);
-
 	ht->arBuckets[nIndex] = p;
 	CONNECT_TO_GLOBAL_DLLIST(p, ht);
 
@@ -360,10 +359,10 @@ int _hash_table_index_update_or_next_insert(hash_table_t *ht, ulong h, value_t *
 	p->nKeyLength = 0; /* Numeric indices are marked by making the nKeyLength == 0 */
 	p->h = h;
 	p->value = *pData;
+	
 	if (pDest) pDest->type = NULL_T;
 
 	CONNECT_TO_BUCKET_DLLIST(p, ht->arBuckets[nIndex]);
-
 	ht->arBuckets[nIndex] = p;
 	CONNECT_TO_GLOBAL_DLLIST(p, ht);
 
