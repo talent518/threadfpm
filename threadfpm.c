@@ -1523,16 +1523,21 @@ PHP_FUNCTION(apache_request_headers) /* {{{ */
 } /* }}} */
 
 // ===========================================================================================================
+
 static hash_table_t *share_var_ht = NULL;
 static pthread_mutex_t share_var_rlock;
 static pthread_mutex_t share_var_wlock;
-static int share_var_locks = 0;
+static volatile int share_var_locks = 0;
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_share_var_exists, 0, 0, 1)
 ZEND_ARG_VARIADIC_INFO(0, keys)
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_share_var_get, 0, 0, 0)
+ZEND_ARG_VARIADIC_INFO(0, keys)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_share_var_get_and_del, 0, 0, 0)
 ZEND_ARG_VARIADIC_INFO(0, keys)
 ZEND_END_ARG_INFO()
 
@@ -1662,7 +1667,7 @@ static PHP_FUNCTION(share_var_exists)
 		} else if(Z_TYPE(arguments[i]) == IS_LONG) {
 			if(hash_table_index_find((hash_table_t*) v1.ptr, Z_LVAL(arguments[i]), &v2) == FAILURE) break;
 		} else {
-			convert_to_string(&arguments[0]);
+			convert_to_string(&arguments[i]);
 			if(hash_table_find((hash_table_t*) v1.ptr, Z_STRVAL(arguments[i]), Z_STRLEN(arguments[i]), &v2) == FAILURE) break;
 		}
 		v1 = v2;
@@ -1836,13 +1841,60 @@ static PHP_FUNCTION(share_var_get)
 		if(Z_TYPE(arguments[i]) == IS_LONG) {
 			if(hash_table_index_find((hash_table_t*) v1.ptr, Z_LVAL(arguments[i]), &v2) == FAILURE) break;
 		} else {
-			convert_to_string(&arguments[0]);
+			convert_to_string(&arguments[i]);
 			if(hash_table_find((hash_table_t*) v1.ptr, Z_STRVAL(arguments[i]), Z_STRLEN(arguments[i]), &v2) == FAILURE) break;
 		}
 		if(i == arg_num - 1) value_to_zval(&v2, return_value);
 		else v1 = v2;
 	}
 	SHARE_VAR_RUNLOCK();
+
+	end:
+	efree(arguments);
+}
+
+static PHP_FUNCTION(share_var_get_and_del)
+{
+	zval *arguments;
+	int arg_num = ZEND_NUM_ARGS(), i;
+
+	if(!share_var_ht) return;
+
+	if(arg_num <= 0) {
+		SHARE_VAR_WLOCK();
+		array_init_size(return_value, hash_table_num_elements(share_var_ht));
+		hash_table_apply_with_argument(share_var_ht, (hash_apply_func_arg_t) hash_table_to_zval, return_value);
+		hash_table_clean(share_var_ht);
+		SHARE_VAR_WUNLOCK();
+		return;
+	}
+
+	arguments = (zval *) safe_emalloc(sizeof(zval), arg_num, 0);
+	if(zend_get_parameters_array_ex(arg_num, arguments) == FAILURE) goto end;
+
+	SHARE_VAR_WLOCK();
+	value_t v1 = {.type=HT_T,.ptr=share_var_ht,.expire=0}, v2 = {.type=NULL_T,.expire=0};
+	for(i=0; i<arg_num && v1.type == HT_T; i++) {
+		if(Z_TYPE(arguments[i]) == IS_LONG) {
+			if(hash_table_index_find((hash_table_t*) v1.ptr, Z_LVAL(arguments[i]), &v2) == FAILURE) break;
+
+			if(i == arg_num - 1) {
+				value_to_zval(&v2, return_value);
+				hash_table_index_del((hash_table_t*) v1.ptr, Z_LVAL(arguments[i]));
+			}
+		} else {
+			convert_to_string(&arguments[i]);
+			if(hash_table_find((hash_table_t*) v1.ptr, Z_STRVAL(arguments[i]), Z_STRLEN(arguments[i]), &v2) == FAILURE) break;
+			
+			if(i == arg_num - 1) {
+				value_to_zval(&v2, return_value);
+				hash_table_del((hash_table_t*) v1.ptr, Z_STRVAL(arguments[i]), Z_STRLEN(arguments[i]));
+			}
+		}
+
+		v1 = v2;
+	}
+	SHARE_VAR_WUNLOCK(); // if(i!=arg_num) {printf("TYPE: %d,%d,%d\n", v1.type, v2.type, i);php_var_dump(&arguments[0], 0);php_var_dump(&arguments[i], 0);}
 
 	end:
 	efree(arguments);
@@ -1998,7 +2050,7 @@ static PHP_FUNCTION(share_var_put)
 					}
 				}
 			} else {
-				convert_to_string(&arguments[0]);
+				convert_to_string(&arguments[i]);
 				if(hash_table_find((hash_table_t*) v1.ptr, Z_STRVAL(arguments[i]), Z_STRLEN(arguments[i]), &v2) == FAILURE) {
 					v2.type = HT_T;
 					v2.ptr = malloc(sizeof(hash_table_t));
@@ -2167,7 +2219,7 @@ static PHP_FUNCTION(share_var_inc)
 					}
 				}
 			} else {
-				convert_to_string(&arguments[0]);
+				convert_to_string(&arguments[i]);
 				if(hash_table_find((hash_table_t*) v1.ptr, Z_STRVAL(arguments[i]), Z_STRLEN(arguments[i]), &v2) == FAILURE) {
 					v2.type = HT_T;
 					v2.ptr = malloc(sizeof(hash_table_t));
@@ -2228,7 +2280,7 @@ static PHP_FUNCTION(share_var_set)
 				}
 			}
 		} else {
-			convert_to_string(&arguments[0]);
+			convert_to_string(&arguments[i]);
 			if(hash_table_find((hash_table_t*) v1.ptr, Z_STRVAL(arguments[i]), Z_STRLEN(arguments[i]), &v2) == FAILURE) {
 				v2.type = HT_T;
 				v2.ptr = malloc(sizeof(hash_table_t));
@@ -2289,7 +2341,7 @@ static PHP_FUNCTION(share_var_set_ex)
 				}
 			}
 		} else {
-			convert_to_string(&arguments[0]);
+			convert_to_string(&arguments[i]);
 			if(hash_table_find((hash_table_t*) v1.ptr, Z_STRVAL(arguments[i]), Z_STRLEN(arguments[i]), &v2) == FAILURE) {
 				v2.type = HT_T;
 				v2.ptr = malloc(sizeof(hash_table_t));
@@ -2336,7 +2388,7 @@ static PHP_FUNCTION(share_var_del)
 		} else if(Z_TYPE(arguments[i]) == IS_LONG) {
 			if(hash_table_index_find((hash_table_t*) v1.ptr, Z_LVAL(arguments[i]), &v2) == FAILURE) break;
 		} else {
-			convert_to_string(&arguments[0]);
+			convert_to_string(&arguments[i]);
 			if(hash_table_find((hash_table_t*) v1.ptr, Z_STRVAL(arguments[i]), Z_STRLEN(arguments[i]), &v2) == FAILURE) break;
 		}
 		v1 = v2;
@@ -2383,7 +2435,7 @@ static PHP_FUNCTION(share_var_count)
 		if(Z_TYPE(arguments[i]) == IS_LONG) {
 			if(hash_table_index_find((hash_table_t*) v1.ptr, Z_LVAL(arguments[i]), &v2) == FAILURE) break;
 		} else {
-			convert_to_string(&arguments[0]);
+			convert_to_string(&arguments[i]);
 			if(hash_table_find((hash_table_t*) v1.ptr, Z_STRVAL(arguments[i]), Z_STRLEN(arguments[i]), &v2) == FAILURE) break;
 		}
 		if(i == arg_num - 1) {
@@ -2419,18 +2471,18 @@ static int hash_table_clean_ex(bucket_t *p, int *ex) {
 	return HASH_TABLE_APPLY_KEEP;
 }
 
-int share_var_clean_ex()
+static int share_var_clean_ex()
 {
 	int n;
 	
 	if(!share_var_ht) return 0;
-	
+
 	SHARE_VAR_WLOCK();
 	n = (int) time(NULL);
 	hash_table_apply_with_argument(share_var_ht, (hash_apply_func_arg_t) hash_table_clean_ex, &n);
 	n = hash_table_num_elements(share_var_ht);
 	SHARE_VAR_WUNLOCK();
-	
+
 	return n;
 }
 
@@ -2439,6 +2491,7 @@ static void share_var_destory()
 	pthread_mutex_destroy(&share_var_rlock);
 	pthread_mutex_destroy(&share_var_wlock);
 	hash_table_destroy(share_var_ht);
+	
 	free(share_var_ht);
 	share_var_ht = NULL;
 }
@@ -2452,6 +2505,7 @@ static const zend_function_entry cgi_fcgi_sapi_functions[] = {
 	
 	PHP_FE(share_var_exists, arginfo_share_var_exists)
 	PHP_FE(share_var_get, arginfo_share_var_get)
+	PHP_FE(share_var_get_and_del, arginfo_share_var_get_and_del)
 	PHP_FE(share_var_put, arginfo_share_var_put)
 	PHP_FE(share_var_inc, arginfo_share_var_inc)
 	PHP_FE(share_var_set, arginfo_share_var_set)
