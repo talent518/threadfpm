@@ -78,6 +78,7 @@
 # include <fcntl.h>
 #endif
 
+#include <sys/prctl.h>
 #include <time.h>
 #include <syslog.h>
 #include <semaphore.h>
@@ -2591,7 +2592,7 @@ static void *thread_request(void*_) {
 	size_t tidlen = snprintf(tidstr, sizeof(tidstr), "Tid: %d", pthread_tid);
 	double t, t2, t3;
 	struct timespec ts;
-	char path[PATH_MAX];
+	char path[PATH_MAX], name[32];
 	sapi_request_info *request_info;
 
 	thread_sigmask();
@@ -2634,6 +2635,9 @@ static void *thread_request(void*_) {
 		CGIG(body_fd) = -1;
 		CGIG(response_length) = 0;
 		init_request_info();
+
+	    sprintf(name, "%s %s", request_info->request_method, FCGI_GETENV(arg->request, "REQUEST_URI"));
+	    prctl(PR_SET_NAME, (unsigned long) name);
 
 		/* request startup only after we've done all we can to
 		 *            get path_translated */
@@ -2813,8 +2817,12 @@ static zend_bool create_thread(void*(*handler)(void*), void* arg) {
 	return ret == 0;
 }
 
-static void *thread_accept(void*_) {
+static void *thread_accept(void*_i) {
 	thread_arg_t *arg;
+	char name[32];
+
+	sprintf(name, "accept%d", (int)_i);
+	prctl(PR_SET_NAME, (unsigned long) name);
 	
 	pthread_mutex_lock(&lock);
 	naccepts++;
