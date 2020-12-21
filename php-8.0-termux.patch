@@ -1,0 +1,57 @@
+diff --git a/ext/standard/basic_functions.c b/ext/standard/basic_functions.c
+index 33247c4cb3..0bfc1d315a 100755
+--- a/ext/standard/basic_functions.c
++++ b/ext/standard/basic_functions.c
+@@ -416,7 +416,7 @@ PHP_MINIT_FUNCTION(basic) /* {{{ */
+ PHP_MSHUTDOWN_FUNCTION(basic) /* {{{ */
+ {
+ #ifdef HAVE_SYSLOG_H
+-	PHP_MSHUTDOWN(syslog)(SHUTDOWN_FUNC_ARGS_PASSTHRU);
++	BASIC_MSHUTDOWN_SUBMODULE(syslog);
+ #endif
+ #ifdef ZTS
+ 	ts_free_id(basic_globals_id);
+diff --git a/ext/standard/dns.c b/ext/standard/dns.c
+index 42bc93c41a..5ea5633680 100644
+--- a/ext/standard/dns.c
++++ b/ext/standard/dns.c
+@@ -114,6 +114,8 @@
+ #endif
+ /* }}} */
+ 
++#define dn_skipname(...) -1
++
+ static zend_string *php_gethostbyaddr(char *ip);
+ static zend_string *php_gethostbyname(char *name);
+ 
+diff --git a/ext/standard/php_fopen_wrapper.c b/ext/standard/php_fopen_wrapper.c
+index c5743c3361..1c40c1241c 100644
+--- a/ext/standard/php_fopen_wrapper.c
++++ b/ext/standard/php_fopen_wrapper.c
+@@ -29,6 +29,8 @@
+ #include "php_fopen_wrappers.h"
+ #include "SAPI.h"
+ 
++#define getdtablesize(...) INT_MAX
++
+ static ssize_t php_stream_output_write(php_stream *stream, const char *buf, size_t count) /* {{{ */
+ {
+ 	PHPWRITE(buf, count);
+diff --git a/ext/standard/syslog.c b/ext/standard/syslog.c
+index 5926abf34e..921de9acaf 100644
+--- a/ext/standard/syslog.c
++++ b/ext/standard/syslog.c
+@@ -103,13 +103,11 @@ PHP_RINIT_FUNCTION(syslog)
+ }
+ 
+ 
+-#ifdef PHP_WIN32
+ PHP_RSHUTDOWN_FUNCTION(syslog)
+ {
+ 	closelog();
+ 	return SUCCESS;
+ }
+-#endif
+ 
+ PHP_MSHUTDOWN_FUNCTION(syslog)
+ {
