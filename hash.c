@@ -84,7 +84,8 @@ void hash_table_value_free(value_t *value) {
 		hash_table_destroy((hash_table_t*) value->ptr);
 		free(value->ptr);
 		break;
-	case PTR_T:
+	case TS_HT_T:
+		ts_hash_table_destroy((ts_hash_table_t*) value->ptr);
 		break;
 	default:
 		break;
@@ -186,37 +187,6 @@ ulong hash_table_func(register const char *arKey, register uint nKeyLength) {
 }
 
 static const bucket_t *uninitialized_bucket = NULL;
-
-static zend_always_inline void hash_table_bucket_delete(hash_table_t *ht, bucket_t *p) {
-	if (p->pLast) {
-		p->pLast->pNext = p->pNext;
-	} else {
-		ht->arBuckets[p->h & ht->nTableMask] = p->pNext;
-	}
-	if (p->pNext) {
-		p->pNext->pLast = p->pLast;
-	}
-	if (p->pListLast != NULL) {
-		p->pListLast->pListNext = p->pListNext;
-	} else {
-		/* Deleting the head of the list */
-		ht->pListHead = p->pListNext;
-	}
-	if (p->pListNext != NULL) {
-		p->pListNext->pListLast = p->pListLast;
-	} else {
-		/* Deleting the tail of the list */
-		ht->pListTail = p->pListLast;
-	}
-	if (ht->pInternalPointer == p) {
-		ht->pInternalPointer = p->pListNext;
-	}
-	ht->nNumOfElements--;
-	if (ht->pDestructor) {
-		ht->pDestructor(&p->value);
-	}
-	free(p);
-}
 
 int _hash_table_init(hash_table_t *ht, uint nSize, hash_dtor_func_t pDestructor, zend_bool bApplyProtection) {
 	uint i = 3;
