@@ -2760,7 +2760,7 @@ static PHP_FUNCTION(ts_var_fd) {
 		ZVAL_STRING(&shutdown_function_entry.arguments[0], "ts_var_fd_close");
 		ZVAL_ZVAL(&shutdown_function_entry.arguments[1], return_value, 1, 0);
 		
-		append_user_shutdown_function(shutdown_function_entry);
+		append_user_shutdown_function(&shutdown_function_entry);
 	}
 }
 
