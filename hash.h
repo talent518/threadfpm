@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <zend_types.h>
 
@@ -26,8 +27,8 @@ typedef enum {
 	DOUBLE_T,
 	STR_T,
 	HT_T,
-	PTR_T,
 	SERI_T,
+	TS_HT_T
 } type_t;
 
 typedef struct value_t {
@@ -149,5 +150,119 @@ int hash_table_num_elements(const hash_table_t *ht);
 void hash_table_reindex(hash_table_t *ht, zend_bool only_integer_keys);
 
 ulong hash_table_func(const char *arKey, uint nKeyLength);
+
+static zend_always_inline void hash_table_bucket_delete(hash_table_t *ht, bucket_t *p) {
+	if (p->pLast) {
+		p->pLast->pNext = p->pNext;
+	} else {
+		ht->arBuckets[p->h & ht->nTableMask] = p->pNext;
+	}
+	if (p->pNext) {
+		p->pNext->pLast = p->pLast;
+	}
+	if (p->pListLast != NULL) {
+		p->pListLast->pListNext = p->pListNext;
+	} else {
+		/* Deleting the head of the list */
+		ht->pListHead = p->pListNext;
+	}
+	if (p->pListNext != NULL) {
+		p->pListNext->pListLast = p->pListLast;
+	} else {
+		/* Deleting the tail of the list */
+		ht->pListTail = p->pListLast;
+	}
+	if (ht->pInternalPointer == p) {
+		ht->pInternalPointer = p->pListNext;
+	}
+	ht->nNumOfElements--;
+	if (ht->pDestructor) {
+		ht->pDestructor(&p->value);
+	}
+	free(p);
+}
+
+// ===========================================================================================================
+
+#include <pthread.h>
+
+typedef struct ts_hash_table_t {
+	hash_table_t ht;
+	volatile int rd_count;
+	volatile int ref_count; // reference count
+	pthread_mutex_t rlock;
+	pthread_mutex_t wlock;
+	pthread_mutex_t lock;
+	int fds[2];
+} ts_hash_table_t;
+
+static zend_always_inline int _ts_hash_table_init(ts_hash_table_t *ts_ht, uint nSize, hash_dtor_func_t pDestructor, zend_bool bApplyProtection) {
+	ts_ht->rd_count = 0;
+	ts_ht->ref_count = 1;
+	ts_ht->fds[0] = 0;
+	ts_ht->fds[1] = 0;
+	pthread_mutex_init(&ts_ht->rlock, NULL);
+	pthread_mutex_init(&ts_ht->wlock, NULL);
+	pthread_mutex_init(&ts_ht->lock, NULL);
+	return _hash_table_init(&ts_ht->ht, nSize, pDestructor, bApplyProtection);
+}
+
+#define ts_hash_table_init(ht, nSize)                                       _ts_hash_table_init((ht), (nSize), hash_table_value_free, 0)
+#define ts_hash_table_init_ex(ht, nSize, pDestructor, bApplyProtection)     _ts_hash_table_init((ht), (nSize), (pDestructor), (bApplyProtection))
+
+static zend_always_inline void ts_hash_table_rd_lock(ts_hash_table_t *ts_ht) {
+	pthread_mutex_lock(&ts_ht->rlock);
+	if(++ts_ht->rd_count == 1) pthread_mutex_lock(&ts_ht->wlock);
+	pthread_mutex_unlock(&ts_ht->rlock);
+}
+
+static zend_always_inline void ts_hash_table_rd_unlock(ts_hash_table_t *ts_ht) {
+	pthread_mutex_lock(&ts_ht->rlock);
+	if(--ts_ht->rd_count == 0) pthread_mutex_unlock(&ts_ht->wlock);
+	pthread_mutex_unlock(&ts_ht->rlock);
+}
+
+static zend_always_inline void ts_hash_table_wr_lock(ts_hash_table_t *ts_ht) {
+	pthread_mutex_lock(&ts_ht->wlock);
+}
+
+static zend_always_inline void ts_hash_table_wr_unlock(ts_hash_table_t *ts_ht) {
+	pthread_mutex_unlock(&ts_ht->wlock);
+}
+
+static zend_always_inline void ts_hash_table_lock(ts_hash_table_t *ts_ht) {
+	pthread_mutex_lock(&ts_ht->lock);
+}
+
+static zend_always_inline void ts_hash_table_unlock(ts_hash_table_t *ts_ht) {
+	pthread_mutex_unlock(&ts_ht->lock);
+}
+
+static zend_always_inline void ts_hash_table_ref(ts_hash_table_t *ts_ht) {
+	pthread_mutex_lock(&ts_ht->lock);
+	ts_ht->ref_count++;
+	pthread_mutex_unlock(&ts_ht->lock);
+}
+
+#define ts_hash_table_unref(ts_ht) ts_hash_table_destroy(ts_ht)
+
+static zend_always_inline void ts_hash_table_destroy_ex(ts_hash_table_t *ts_ht, int is_free) {
+	pthread_mutex_lock(&ts_ht->lock);
+	if(--ts_ht->ref_count == 0) {
+		pthread_mutex_unlock(&ts_ht->lock);
+
+		if(ts_ht->fds[0] > 0) close(ts_ht->fds[0]);
+		if(ts_ht->fds[1] > 0) close(ts_ht->fds[1]);
+
+		pthread_mutex_destroy(&ts_ht->rlock);
+		pthread_mutex_destroy(&ts_ht->wlock);
+		pthread_mutex_destroy(&ts_ht->lock);
+		hash_table_destroy(&ts_ht->ht);
+		
+		if(is_free) free(ts_ht);
+	} else pthread_mutex_unlock(&ts_ht->lock);
+}
+
+#define ts_hash_table_destroy(ts_ht) ts_hash_table_destroy_ex(ts_ht, 1)
 
 #endif							/* _HASH_H */
