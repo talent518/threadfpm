@@ -2895,10 +2895,10 @@ static PHP_FUNCTION(ts_var_fd) {
 	}
 	
 	if(Z_TYPE_P(return_value) != IS_FALSE) {
-		shutdown_function_entry.arg_count = 2;
+		ZVAL_STRING(&shutdown_function_entry.function_name, "ts_var_fd_close");
+		shutdown_function_entry.arg_count = 1;
 		shutdown_function_entry.arguments = (zval *) safe_emalloc(sizeof(zval), shutdown_function_entry.arg_count, 0);
-		ZVAL_STRING(&shutdown_function_entry.arguments[0], "ts_var_fd_close");
-		ZVAL_ZVAL(&shutdown_function_entry.arguments[1], return_value, 1, 0);
+		ZVAL_ZVAL(&shutdown_function_entry.arguments[0], return_value, 1, 0);
 		
 		append_user_shutdown_function(&shutdown_function_entry);
 	}
