@@ -2695,6 +2695,160 @@ static PHP_FUNCTION(ts_var_fd_close) {
 
 // -----------------------------------------------------------------------------------------------------------
 
+static int hash_table_to_zval_wr(bucket_t *p, zval *a) {
+	if(p->nKeyLength == 0) {
+		switch(p->value.type) {
+			case NULL_T:
+				add_index_null(a, p->h);
+				break;
+			case BOOL_T:
+				add_index_bool(a, p->h, p->value.b);
+				break;
+			case CHAR_T:
+				add_index_long(a, p->h, p->value.c);
+				break;
+			case SHORT_T:
+				add_index_long(a, p->h, p->value.s);
+				break;
+			case INT_T:
+				add_index_long(a, p->h, p->value.i);
+				break;
+			case LONG_T:
+				add_index_long(a, p->h, p->value.l);
+				break;
+			case FLOAT_T:
+				add_index_double(a, p->h, p->value.f);
+				break;
+			case DOUBLE_T:
+				add_index_double(a, p->h, p->value.d);
+				break;
+			case STR_T:
+				add_index_stringl(a, p->h, p->value.str->str, p->value.str->len);
+				break;
+			case HT_T: {
+				zval z;
+				array_init_size(&z, hash_table_num_elements(p->value.ptr));
+				hash_table_apply_with_argument(p->value.ptr, (hash_apply_func_arg_t) hash_table_to_zval_wr, &z);
+				add_index_zval(a, p->h, &z);
+				break;
+			}
+			case SERI_T: {
+				zval rv;
+				UNSERIALIZE_EX(p->value.str->str, p->value.str->len, __NULL, ZVAL_COPY(&rv, retval), add_index_zval(a, p->h, &rv));
+				break;
+			}
+			case TS_HT_T: {
+				zval z;
+				array_init_size(&z, hash_table_num_elements(p->value.ptr));
+				ts_hash_table_wr_lock(p->value.ptr);
+				hash_table_apply_with_argument(p->value.ptr, (hash_apply_func_arg_t) hash_table_to_zval_wr, &z);
+				ts_hash_table_wr_unlock(p->value.ptr);
+				add_index_zval(a, p->h, &z);
+				break;
+			}
+		}
+	} else {
+		switch(p->value.type) {
+			case NULL_T:
+				add_assoc_null_ex(a, p->arKey, p->nKeyLength);
+				break;
+			case BOOL_T:
+				add_assoc_bool_ex(a, p->arKey, p->nKeyLength, p->value.b);
+				break;
+			case CHAR_T:
+				add_assoc_long_ex(a, p->arKey, p->nKeyLength, p->value.c);
+				break;
+			case SHORT_T:
+				add_assoc_long_ex(a, p->arKey, p->nKeyLength, p->value.s);
+				break;
+			case INT_T:
+				add_assoc_long_ex(a, p->arKey, p->nKeyLength, p->value.i);
+				break;
+			case LONG_T:
+				add_assoc_long_ex(a, p->arKey, p->nKeyLength, p->value.l);
+				break;
+			case FLOAT_T:
+				add_assoc_double_ex(a, p->arKey, p->nKeyLength, p->value.f);
+				break;
+			case DOUBLE_T:
+				add_assoc_double_ex(a, p->arKey, p->nKeyLength, p->value.d);
+				break;
+			case STR_T:
+				add_assoc_stringl_ex(a, p->arKey, p->nKeyLength, p->value.str->str, p->value.str->len);
+				break;
+			case HT_T: {
+				zval z;
+				array_init_size(&z, hash_table_num_elements(p->value.ptr));
+				hash_table_apply_with_argument(p->value.ptr, (hash_apply_func_arg_t) hash_table_to_zval_wr, &z);
+				add_assoc_zval_ex(a, p->arKey, p->nKeyLength, &z);
+				break;
+			}
+			case SERI_T: {
+				zval rv;
+				UNSERIALIZE_EX(p->value.str->str, p->value.str->len, __NULL, ZVAL_COPY(&rv, retval), add_assoc_zval_ex(a, p->arKey, p->nKeyLength, &rv));
+				break;
+			}
+			case TS_HT_T: {
+				zval z;
+				array_init_size(&z, hash_table_num_elements(p->value.ptr));
+				ts_hash_table_wr_lock(p->value.ptr);
+				hash_table_apply_with_argument(p->value.ptr, (hash_apply_func_arg_t) hash_table_to_zval_wr, &z);
+				ts_hash_table_wr_unlock(p->value.ptr);
+				add_assoc_zval_ex(a, p->arKey, p->nKeyLength, &z);
+				break;
+			}
+		}
+	}
+	
+	return HASH_TABLE_APPLY_KEEP;
+}
+
+void value_to_zval_wr(value_t *v, zval *return_value) {
+	switch(v->type) {
+		case BOOL_T:
+			RETVAL_BOOL(v->b);
+			break;
+		case CHAR_T:
+			RETVAL_LONG(v->c);
+			break;
+		case SHORT_T:
+			RETVAL_LONG(v->s);
+			break;
+		case INT_T:
+			RETVAL_LONG(v->i);
+			break;
+		case LONG_T:
+			RETVAL_LONG(v->l);
+			break;
+		case FLOAT_T:
+			RETVAL_DOUBLE(v->f);
+			break;
+		case DOUBLE_T:
+			RETVAL_DOUBLE(v->d);
+			break;
+		case STR_T:
+			RETVAL_STRINGL(v->str->str, v->str->len);
+			break;
+		case HT_T:
+			array_init_size(return_value, hash_table_num_elements(v->ptr));
+			hash_table_apply_with_argument(v->ptr, (hash_apply_func_arg_t) hash_table_to_zval_wr, return_value);
+			break;
+		case SERI_T: {
+			UNSERIALIZE(v->str->str, v->str->len, ZVAL_COPY(return_value, retval));
+			break;
+		}
+		case TS_HT_T:
+			array_init_size(return_value, hash_table_num_elements(v->ptr));
+			ts_hash_table_wr_lock(v->ptr);
+			hash_table_apply_with_argument(v->ptr, (hash_apply_func_arg_t) hash_table_to_zval_wr, return_value);
+			ts_hash_table_wr_unlock(v->ptr);
+			break;
+		default:
+			RETVAL_NULL();
+			break;
+	}
+}
+
 static ts_hash_table_t ts_var;
 
 ZEND_BEGIN_ARG_INFO(arginfo_ts_var_declare, 0)
@@ -2943,7 +3097,7 @@ static PHP_FUNCTION(ts_var_pop) {
 	
 	ts_hash_table_wr_lock(ts_ht);
 	if(ts_ht->ht.pListTail) {
-		value_to_zval(&ts_ht->ht.pListTail->value, return_value);
+		value_to_zval_wr(&ts_ht->ht.pListTail->value, return_value);
 		if(key) {
 			if(ts_ht->ht.pListTail->nKeyLength == 0) {
 				ZEND_TRY_ASSIGN_REF_LONG(key, ts_ht->ht.pListTail->h);
@@ -2979,7 +3133,7 @@ static PHP_FUNCTION(ts_var_shift) {
 	
 	ts_hash_table_wr_lock(ts_ht);
 	if(ts_ht->ht.pListHead) {
-		value_to_zval(&ts_ht->ht.pListHead->value, return_value);
+		value_to_zval_wr(&ts_ht->ht.pListHead->value, return_value);
 		if(key) {
 			if(ts_ht->ht.pListHead->nKeyLength == 0) {
 				ZEND_TRY_ASSIGN_REF_LONG(key, ts_ht->ht.pListHead->h);
@@ -3023,17 +3177,17 @@ static PHP_FUNCTION(ts_var_get) {
 		ts_hash_table_wr_lock(ts_ht);
 		if(is_null) {
 			array_init_size(return_value, hash_table_num_elements(&ts_ht->ht));
-			hash_table_apply_with_argument(&ts_ht->ht, (hash_apply_func_arg_t) hash_table_to_zval, return_value);
+			hash_table_apply_with_argument(&ts_ht->ht, (hash_apply_func_arg_t) hash_table_to_zval_wr, return_value);
 			// hash_table_clean(&ts_ht->ht); // 防止参数输错而导致清空才会注释的
 		} else if(key) {
 			zend_long h = zend_get_hash_value(ZSTR_VAL(key), ZSTR_LEN(key));
 			if(hash_table_quick_find(&ts_ht->ht, ZSTR_VAL(key), ZSTR_LEN(key), h, &v) == SUCCESS) {
-				value_to_zval(&v, return_value);
+				value_to_zval_wr(&v, return_value);
 				hash_table_quick_del(&ts_ht->ht, ZSTR_VAL(key), ZSTR_LEN(key), h);
 			}
 		} else {
 			if(hash_table_index_find(&ts_ht->ht, index, &v) == SUCCESS) {
-				value_to_zval(&v, return_value);
+				value_to_zval_wr(&v, return_value);
 				hash_table_index_del(&ts_ht->ht, index);
 			}
 		}
@@ -3042,14 +3196,14 @@ static PHP_FUNCTION(ts_var_get) {
 		ts_hash_table_rd_lock(ts_ht);
 		if(is_null) {
 			array_init_size(return_value, hash_table_num_elements(&ts_ht->ht));
-			hash_table_apply_with_argument(&ts_ht->ht, (hash_apply_func_arg_t) hash_table_to_zval, return_value);
+			hash_table_apply_with_argument(&ts_ht->ht, (hash_apply_func_arg_t) hash_table_to_zval_wr, return_value);
 		} else if(key) {
 			if(hash_table_find(&ts_ht->ht, ZSTR_VAL(key), ZSTR_LEN(key), &v) == SUCCESS) {
-				value_to_zval(&v, return_value);
+				value_to_zval_wr(&v, return_value);
 			}
 		} else {
 			if(hash_table_index_find(&ts_ht->ht, index, &v) == SUCCESS) {
-				value_to_zval(&v, return_value);
+				value_to_zval_wr(&v, return_value);
 			}
 		}
 		ts_hash_table_rd_unlock(ts_ht);
@@ -3121,26 +3275,26 @@ static PHP_FUNCTION(ts_var_inc) {
 		zend_long h = zend_get_hash_value(ZSTR_VAL(key), ZSTR_LEN(key));
 		if(hash_table_quick_find(&ts_ht->ht, ZSTR_VAL(key), ZSTR_LEN(key), h, &v2) == FAILURE) {
 			if(hash_table_quick_update(&ts_ht->ht, ZSTR_VAL(key), ZSTR_LEN(key), h, &v1, NULL) == SUCCESS) {
-				value_to_zval(&v1, return_value);
+				value_to_zval_wr(&v1, return_value);
 			}
 		} else {
 			value_add(&v2, &v1);
 			if(v2.type != HT_T) {
 				if(hash_table_quick_update(&ts_ht->ht, ZSTR_VAL(key), ZSTR_LEN(key), h, &v2, NULL) == SUCCESS) {
-					value_to_zval(&v2, return_value);
+					value_to_zval_wr(&v2, return_value);
 				}
 			} else RETVAL_LONG(hash_table_num_elements(v2.ptr));
 		}
 	} else {
 		if(hash_table_index_find(&ts_ht->ht, index, &v2) == FAILURE) {
 			if(hash_table_index_update(&ts_ht->ht, index, &v1, NULL) == SUCCESS) {
-				value_to_zval(&v1, return_value);
+				value_to_zval_wr(&v1, return_value);
 			}
 		} else {
 			value_add(&v2, &v1);
 			if(v2.type != HT_T) {
 				if(hash_table_index_update(&ts_ht->ht, index, &v2, NULL) == SUCCESS) {
-					value_to_zval(&v2, return_value);
+					value_to_zval_wr(&v2, return_value);
 				}
 			} else RETVAL_LONG(hash_table_num_elements(v2.ptr));
 		}
