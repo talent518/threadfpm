@@ -2887,32 +2887,25 @@ static PHP_FUNCTION(ts_var_declare) {
 		ts_hash_table_ref(ts_ht);
 		ts_hash_table_rd_unlock(ts_ht);
 	} else {
-		ts_hash_table_rd_lock(ts_ht);
+		ts_hash_table_wr_lock(ts_ht);
 		if(key) {
-			if(hash_table_find(&ts_ht->ht, ZSTR_VAL(key), ZSTR_LEN(key), &v) == FAILURE || v.type != TS_HT_T) {
-				ts_hash_table_lock(ts_ht);
-				if(hash_table_find(&ts_ht->ht, ZSTR_VAL(key), ZSTR_LEN(key), &v) == FAILURE || v.type != TS_HT_T) {
-					v.type = TS_HT_T;
-					v.ptr = (ts_hash_table_t *) malloc(sizeof(ts_hash_table_t));
-					ts_hash_table_init(v.ptr, 2);
-					hash_table_update(&ts_ht->ht, ZSTR_VAL(key), ZSTR_LEN(key), &v, NULL);
-				}
-				ts_hash_table_unlock(ts_ht);
+			zend_long h = zend_get_hash_value(ZSTR_VAL(key), ZSTR_LEN(key));
+			if(hash_table_quick_find(&ts_ht->ht, ZSTR_VAL(key), ZSTR_LEN(key), h, &v) == FAILURE || v.type != TS_HT_T) {
+				v.type = TS_HT_T;
+				v.ptr = (ts_hash_table_t *) malloc(sizeof(ts_hash_table_t));
+				ts_hash_table_init(v.ptr, 2);
+				hash_table_quick_update(&ts_ht->ht, ZSTR_VAL(key), ZSTR_LEN(key), h, &v, NULL);
 			}
 		} else {
 			if(hash_table_index_find(&ts_ht->ht, index, &v) == FAILURE || v.type != TS_HT_T) {
-				ts_hash_table_lock(ts_ht);
-				if(hash_table_index_find(&ts_ht->ht, index, &v) == FAILURE || v.type != TS_HT_T) {
-					v.type = TS_HT_T;
-					v.ptr = (ts_hash_table_t *) malloc(sizeof(ts_hash_table_t));
-					ts_hash_table_init(v.ptr, 2);
-					hash_table_index_update(&ts_ht->ht, index, &v, NULL);
-				}
-				ts_hash_table_unlock(ts_ht);
+				v.type = TS_HT_T;
+				v.ptr = (ts_hash_table_t *) malloc(sizeof(ts_hash_table_t));
+				ts_hash_table_init(v.ptr, 2);
+				hash_table_index_update(&ts_ht->ht, index, &v, NULL);
 			}
 		}
 		ts_hash_table_ref(v.ptr);
-		ts_hash_table_rd_unlock(ts_ht);
+		ts_hash_table_wr_unlock(ts_ht);
 
 		ts_ht = (ts_hash_table_t*) v.ptr;
 	}
@@ -3172,14 +3165,15 @@ static PHP_FUNCTION(ts_var_get) {
 	if ((ts_ht = (ts_hash_table_t *) zend_fetch_resource_ex(zv, PHP_TS_VAR_DESCRIPTOR, le_ts_var_descriptor)) == NULL) {
 		RETURN_FALSE;
 	}
-
-	if(is_del) {
+	
+	if(is_null) {
+		ts_hash_table_rd_lock(ts_ht);
+		array_init_size(return_value, hash_table_num_elements(&ts_ht->ht));
+		hash_table_apply_with_argument(&ts_ht->ht, (hash_apply_func_arg_t) hash_table_to_zval, return_value);
+		ts_hash_table_rd_unlock(ts_ht);
+	} else if(is_del) {
 		ts_hash_table_wr_lock(ts_ht);
-		if(is_null) {
-			array_init_size(return_value, hash_table_num_elements(&ts_ht->ht));
-			hash_table_apply_with_argument(&ts_ht->ht, (hash_apply_func_arg_t) hash_table_to_zval_wr, return_value);
-			// hash_table_clean(&ts_ht->ht); // 防止参数输错而导致清空才会注释的
-		} else if(key) {
+		if(key) {
 			zend_long h = zend_get_hash_value(ZSTR_VAL(key), ZSTR_LEN(key));
 			if(hash_table_quick_find(&ts_ht->ht, ZSTR_VAL(key), ZSTR_LEN(key), h, &v) == SUCCESS) {
 				value_to_zval_wr(&v, return_value);
@@ -3194,16 +3188,13 @@ static PHP_FUNCTION(ts_var_get) {
 		ts_hash_table_wr_unlock(ts_ht);
 	} else {
 		ts_hash_table_rd_lock(ts_ht);
-		if(is_null) {
-			array_init_size(return_value, hash_table_num_elements(&ts_ht->ht));
-			hash_table_apply_with_argument(&ts_ht->ht, (hash_apply_func_arg_t) hash_table_to_zval, return_value);
-		} else if(key) {
+		if(key) {
 			if(hash_table_find(&ts_ht->ht, ZSTR_VAL(key), ZSTR_LEN(key), &v) == SUCCESS) {
-				value_to_zval_wr(&v, return_value);
+				value_to_zval(&v, return_value);
 			}
 		} else {
 			if(hash_table_index_find(&ts_ht->ht, index, &v) == SUCCESS) {
-				value_to_zval_wr(&v, return_value);
+				value_to_zval(&v, return_value);
 			}
 		}
 		ts_hash_table_rd_unlock(ts_ht);
