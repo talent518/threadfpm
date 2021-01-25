@@ -2672,7 +2672,7 @@ static int hash_table_to_zval_wr(bucket_t *p, zval *a) {
 			case HT_T: {
 				zval z;
 				array_init_size(&z, hash_table_num_elements(p->value.ptr));
-				hash_table_apply_with_argument(p->value.ptr, (hash_apply_func_arg_t) hash_table_to_zval_wr, &z);
+				hash_table_apply_with_argument(p->value.ptr, (hash_apply_func_arg_t) hash_table_to_zval, &z);
 				add_index_zval(a, p->h, &z);
 				break;
 			}
@@ -2723,7 +2723,7 @@ static int hash_table_to_zval_wr(bucket_t *p, zval *a) {
 			case HT_T: {
 				zval z;
 				array_init_size(&z, hash_table_num_elements(p->value.ptr));
-				hash_table_apply_with_argument(p->value.ptr, (hash_apply_func_arg_t) hash_table_to_zval_wr, &z);
+				hash_table_apply_with_argument(p->value.ptr, (hash_apply_func_arg_t) hash_table_to_zval, &z);
 				add_assoc_zval_ex(a, p->arKey, p->nKeyLength, &z);
 				break;
 			}
@@ -2775,7 +2775,7 @@ void value_to_zval_wr(value_t *v, zval *return_value) {
 			break;
 		case HT_T:
 			array_init_size(return_value, hash_table_num_elements(v->ptr));
-			hash_table_apply_with_argument(v->ptr, (hash_apply_func_arg_t) hash_table_to_zval_wr, return_value);
+			hash_table_apply_with_argument(v->ptr, (hash_apply_func_arg_t) hash_table_to_zval, return_value);
 			break;
 		case SERI_T: {
 			UNSERIALIZE(v->str->str, v->str->len, ZVAL_COPY(return_value, retval));
@@ -3140,7 +3140,7 @@ static PHP_FUNCTION(ts_var_get) {
 		ts_hash_table_rd_lock(ts_ht);
 		if(is_null) {
 			array_init_size(return_value, hash_table_num_elements(&ts_ht->ht));
-			hash_table_apply_with_argument(&ts_ht->ht, (hash_apply_func_arg_t) hash_table_to_zval_wr, return_value);
+			hash_table_apply_with_argument(&ts_ht->ht, (hash_apply_func_arg_t) hash_table_to_zval, return_value);
 		} else if(key) {
 			if(hash_table_find(&ts_ht->ht, ZSTR_VAL(key), ZSTR_LEN(key), &v) == SUCCESS) {
 				value_to_zval_wr(&v, return_value);
