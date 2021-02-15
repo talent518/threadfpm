@@ -2534,19 +2534,13 @@ static int hash_table_clean_ex(bucket_t *p, int *ex) {
 
 static int share_var_clean_ex()
 {
-	int n, t;
+	int n;
 
 	SHARE_VAR_WLOCK();
-	t = (int) time(NULL);
-	hash_table_apply_with_argument(share_var_ht, (hash_apply_func_arg_t) hash_table_clean_ex, &t);
+	n = (int) time(NULL);
+	hash_table_apply_with_argument(share_var_ht, (hash_apply_func_arg_t) hash_table_clean_ex, &n);
 	n = hash_table_num_elements(share_var_ht);
 	SHARE_VAR_WUNLOCK();
-
-	ts_hash_table_wr_lock(&ts_var);
-	t = (int) time(NULL);
-	hash_table_apply_with_argument(&ts_var, (hash_apply_func_arg_t) hash_table_clean_ex, &t);
-	n += hash_table_num_elements(&ts_var);
-	ts_hash_table_wr_unlock(&ts_var);
 
 	return n;
 }
@@ -2784,6 +2778,18 @@ void value_to_zval_wr(value_t *v, zval *return_value) {
 }
 
 static ts_hash_table_t ts_var;
+
+int ts_var_clean_ex() {
+	int n;
+
+	ts_hash_table_wr_lock(&ts_var);
+	n = (int) time(NULL);
+	hash_table_apply_with_argument(&ts_var.ht, (hash_apply_func_arg_t) hash_table_clean_ex, &n);
+	n = hash_table_num_elements(&ts_var.ht);
+	ts_hash_table_wr_unlock(&ts_var);
+
+	return n;
+}
 
 ZEND_BEGIN_ARG_INFO(arginfo_ts_var_declare, 0)
 ZEND_ARG_INFO(0, key)
@@ -4181,7 +4187,7 @@ consult the installation file that came with this distribution, or visit \n\
     		reqn = reqi;
     	}
 
-		fprintf(stderr, "[%s] STAT: Running %u requests, completed %u requests/second, avg %.1f requests/second, %u worker threads, %u accept threads, %d share vars\n", gettimeofstr(), nreqs, reqs, (float) reqc / (float) reqn, threads, accepts, share_var_clean_ex());
+		fprintf(stderr, "[%s] STAT: Running %u requests, completed %u requests/second, avg %.1f requests/second, %u worker threads, %u accept threads, %d share vars\n", gettimeofstr(), nreqs, reqs, (float) reqc / (float) reqn, threads, accepts, share_var_clean_ex() + ts_var_clean_ex());
 		fflush(stderr);
 		
 		max_reqs += reqs;
