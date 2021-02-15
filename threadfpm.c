@@ -3534,7 +3534,7 @@ static void *thread_request(void*_) {
 		CGIG(response_length) = 0;
 		init_request_info();
 
-	    sprintf(name, "%s %s", request_info->request_method, FCGI_GETENV(arg->request, "REQUEST_URI"));
+	    snprintf(name, sizeof(name), "%s %s", request_info->request_method, FCGI_GETENV(arg->request, "REQUEST_URI"));
 	    prctl(PR_SET_NAME, (unsigned long) name);
 
 		/* request startup only after we've done all we can to
@@ -3719,7 +3719,7 @@ static void *thread_accept(void*_i) {
 	thread_arg_t *arg;
 	char name[32];
 
-	sprintf(name, "accept%d", (int)_i);
+	snprintf(name, sizeof(name), "accept%d", (int)_i);
 	prctl(PR_SET_NAME, (unsigned long) name);
 	
 	pthread_mutex_lock(&lock);
