@@ -147,11 +147,17 @@ int __riscosify_control = __RISCOSIFY_STRICT_UNIX_SPECS;
 #endif
 
 #ifndef Z_PARAM_STR_OR_LONG_EX
+	#if PHP_VERSION_ID >= 70400
+		#define ERROR_CODE _error_code
+	#else
+		#define ERROR_CODE error_code
+	#endif
+
 	#define Z_PARAM_STR_OR_LONG_EX(dest_str, dest_long, is_null, allow_null) \
 		Z_PARAM_PROLOGUE(0, 0); \
 		if (UNEXPECTED(!zend_parse_arg_str_or_long(_arg, &dest_str, &dest_long, &is_null, allow_null))) { \
 			_expected_type = Z_EXPECTED_STRING; \
-			_error_code = ZPP_ERROR_WRONG_ARG; \
+			ERROR_CODE = ZPP_ERROR_WRONG_ARG; \
 			break; \
 		}
 
@@ -3081,7 +3087,7 @@ static PHP_FUNCTION(ts_var_pop) {
 	ZEND_PARSE_PARAMETERS_START(1, 2)
 		Z_PARAM_RESOURCE(zv)
 		Z_PARAM_OPTIONAL
-		Z_PARAM_ZVAL(key)
+		Z_PARAM_ZVAL_DEREF(key)
 	ZEND_PARSE_PARAMETERS_END();
 	
 	if ((ts_ht = (ts_hash_table_t *) zend_fetch_resource_ex(zv, PHP_TS_VAR_DESCRIPTOR, le_ts_var_descriptor)) == NULL) {
@@ -3092,10 +3098,11 @@ static PHP_FUNCTION(ts_var_pop) {
 	if(ts_ht->ht.pListTail) {
 		value_to_zval_wr(&ts_ht->ht.pListTail->value, return_value);
 		if(key) {
+			zval_ptr_dtor(key);
 			if(ts_ht->ht.pListTail->nKeyLength == 0) {
-				ZEND_TRY_ASSIGN_REF_LONG(key, ts_ht->ht.pListTail->h);
+				ZVAL_LONG(key, ts_ht->ht.pListTail->h);
 			} else {
-				ZEND_TRY_ASSIGN_REF_STRINGL(key, ts_ht->ht.pListTail->arKey, ts_ht->ht.pListTail->nKeyLength);
+				ZVAL_STRINGL(key, ts_ht->ht.pListTail->arKey, ts_ht->ht.pListTail->nKeyLength);
 			}
 		}
 		hash_table_bucket_delete(&ts_ht->ht, ts_ht->ht.pListTail);
@@ -3117,7 +3124,7 @@ static PHP_FUNCTION(ts_var_shift) {
 	ZEND_PARSE_PARAMETERS_START(1, 2)
 		Z_PARAM_RESOURCE(zv)
 		Z_PARAM_OPTIONAL
-		Z_PARAM_ZVAL(key)
+		Z_PARAM_ZVAL_DEREF(key)
 	ZEND_PARSE_PARAMETERS_END();
 	
 	if ((ts_ht = (ts_hash_table_t *) zend_fetch_resource_ex(zv, PHP_TS_VAR_DESCRIPTOR, le_ts_var_descriptor)) == NULL) {
@@ -3128,10 +3135,11 @@ static PHP_FUNCTION(ts_var_shift) {
 	if(ts_ht->ht.pListHead) {
 		value_to_zval_wr(&ts_ht->ht.pListHead->value, return_value);
 		if(key) {
+			zval_ptr_dtor(key);
 			if(ts_ht->ht.pListHead->nKeyLength == 0) {
-				ZEND_TRY_ASSIGN_REF_LONG(key, ts_ht->ht.pListHead->h);
+				ZVAL_LONG(key, ts_ht->ht.pListHead->h);
 			} else {
-				ZEND_TRY_ASSIGN_REF_STRINGL(key, ts_ht->ht.pListHead->arKey, ts_ht->ht.pListHead->nKeyLength);
+				ZVAL_STRINGL(key, ts_ht->ht.pListHead->arKey, ts_ht->ht.pListHead->nKeyLength);
 			}
 		}
 		hash_table_bucket_delete(&ts_ht->ht, ts_ht->ht.pListHead);
