@@ -1764,7 +1764,6 @@ static PHP_FUNCTION(share_var_exists)
 	zval *arguments;
 	int arg_num = ZEND_NUM_ARGS(), i;
 	if(arg_num <= 0) return;
-	if(!share_var_ht) return;
 
 	arguments = (zval *) safe_emalloc(sizeof(zval), arg_num, 0);
 	if(zend_get_parameters_array_ex(arg_num, arguments) == FAILURE) goto end;
@@ -1953,8 +1952,6 @@ static PHP_FUNCTION(share_var_get)
 	zval *arguments;
 	int arg_num = ZEND_NUM_ARGS(), i;
 
-	if(!share_var_ht) return;
-
 	if(arg_num <= 0) {
 		SHARE_VAR_RLOCK();
 		array_init_size(return_value, hash_table_num_elements(share_var_ht));
@@ -1988,8 +1985,6 @@ static PHP_FUNCTION(share_var_get_and_del)
 {
 	zval *arguments;
 	int arg_num = ZEND_NUM_ARGS(), i;
-
-	if(!share_var_ht) return;
 
 	if(arg_num <= 0) {
 		SHARE_VAR_WLOCK();
@@ -2115,8 +2110,6 @@ static PHP_FUNCTION(share_var_put)
 	zval *arguments;
 	int arg_num = ZEND_NUM_ARGS(), i;
 	if(arg_num <= 0) return;
-
-	if(!share_var_ht) return;
 
 	arguments = (zval *) safe_emalloc(sizeof(zval), arg_num, 0);
 	if(zend_get_parameters_array_ex(arg_num, arguments) == FAILURE) goto end;
@@ -2292,8 +2285,6 @@ static PHP_FUNCTION(share_var_inc)
 	zval *arguments;
 	int arg_num = ZEND_NUM_ARGS(), i;
 	if(arg_num <= 1) return;
-
-	if(!share_var_ht) return;
 
 	arguments = (zval *) safe_emalloc(sizeof(zval), arg_num, 0);
 	if(zend_get_parameters_array_ex(arg_num, arguments) == FAILURE) goto end;
@@ -2502,7 +2493,6 @@ static PHP_FUNCTION(share_var_del)
 	zval *arguments;
 	int arg_num = ZEND_NUM_ARGS(), i;
 	if(arg_num <= 0) return;
-	if(!share_var_ht) return;
 
 	arguments = (zval *) safe_emalloc(sizeof(zval), arg_num, 0);
 	if(zend_get_parameters_array_ex(arg_num, arguments) == FAILURE) goto end;
@@ -2534,8 +2524,6 @@ static PHP_FUNCTION(share_var_del)
 
 static PHP_FUNCTION(share_var_clean)
 {
-	if(!share_var_ht) return;
-
 	int n;
 	SHARE_VAR_WLOCK();
 	n = hash_table_num_elements(share_var_ht);
@@ -2549,8 +2537,6 @@ static PHP_FUNCTION(share_var_count)
 {
 	zval *arguments;
 	int arg_num = ZEND_NUM_ARGS(), i;
-
-	if(!share_var_ht) return;
 
 	if(arg_num <= 0) {
 		SHARE_VAR_RLOCK();
@@ -2610,15 +2596,19 @@ static int hash_table_clean_ex(bucket_t *p, int *ex) {
 
 static int share_var_clean_ex()
 {
-	int n;
-	
-	if(!share_var_ht) return 0;
+	int n, t;
 
 	SHARE_VAR_WLOCK();
-	n = (int) time(NULL);
-	hash_table_apply_with_argument(share_var_ht, (hash_apply_func_arg_t) hash_table_clean_ex, &n);
+	t = (int) time(NULL);
+	hash_table_apply_with_argument(share_var_ht, (hash_apply_func_arg_t) hash_table_clean_ex, &t);
 	n = hash_table_num_elements(share_var_ht);
 	SHARE_VAR_WUNLOCK();
+
+	ts_hash_table_wr_lock(&ts_var);
+	t = (int) time(NULL);
+	hash_table_apply_with_argument(&ts_var, (hash_apply_func_arg_t) hash_table_clean_ex, &t);
+	n += hash_table_num_elements(&ts_var);
+	ts_hash_table_wr_unlock(&ts_var);
 
 	return n;
 }
