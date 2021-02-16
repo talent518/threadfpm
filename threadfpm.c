@@ -146,6 +146,10 @@ int __riscosify_control = __RISCOSIFY_STRICT_UNIX_SPECS;
 		Z_PARAM_RESOURCE_EX(dest, 1, 0)
 #endif
 
+#ifndef Z_PARAM_ZVAL_DEREF
+	#define Z_PARAM_ZVAL_DEREF(dest) Z_PARAM_ZVAL_EX2(dest, 0, 1, 0)
+#endif
+
 #ifndef Z_PARAM_STR_OR_LONG_EX
 	#define Z_PARAM_STR_OR_LONG_EX(dest_str, dest_long, is_null, allow_null) \
 		Z_PARAM_PROLOGUE(0, 0); \
