@@ -3428,7 +3428,7 @@ static void *thread_request(void*_) {
 	char pidstr[20], tidstr[20];
 	size_t pidlen = snprintf(pidstr, sizeof(pidstr), "Pid: %d", pthread_pid);
 	size_t tidlen = snprintf(tidstr, sizeof(tidstr), "Tid: %d", pthread_tid);
-	double t, t2, t3;
+	double t, t2, t3, t4, t5;
 	struct timespec ts;
 	char path[PATH_MAX], name[32];
 	sapi_request_info *request_info;
@@ -3469,7 +3469,7 @@ static void *thread_request(void*_) {
 
 		dprintf("running request %lu %.3fms\n", arg->id, microtime() - arg->t);
 		
-		t = microtime();
+		t = t2 = t3 = microtime();
 		CGIG(body_fd) = -1;
 		CGIG(response_length) = 0;
 		init_request_info();
@@ -3516,6 +3516,8 @@ static void *thread_request(void*_) {
 			sapi_add_header(tidstr, tidlen, 1);
 		}
 
+		t2 = microtime();
+
 		zend_first_try {
 			if(isRealpath) {
 				if(realpath(request_info->path_translated, path)) {
@@ -3541,6 +3543,8 @@ static void *thread_request(void*_) {
 		} zend_end_try();
 
 	fastcgi_request_done:
+		t3 = microtime();
+
 		if (UNEXPECTED(CGIG(body_fd) != -1)) {
 			close(CGIG(body_fd));
 		}
@@ -3562,7 +3566,7 @@ static void *thread_request(void*_) {
 		php_request_shutdown((void *) 0);
 
 	err:
-		t2 = microtime();
+		t4 = microtime();
 		
 		pthread_mutex_lock(&lock);
 		requests++;
@@ -3576,11 +3580,11 @@ static void *thread_request(void*_) {
 			} zend_end_try();
 		}
 		
-		t3 = microtime();
+		t5 = microtime();
 
 		if(UNEXPECTED(isAccess)) {
-			dprintf("%s %lu %.3fms + %.3fms + %.3fms\n", reqinfo, CGIG(response_length), t2 - t, t3 - t2, t - arg->t);
-			printf("[%s] %d %s %lu %.3fms + %.3fms + %.3fms\n", gettimeofstr(), pthread_tid, reqinfo, CGIG(response_length), t2 - t, t3 - t2, t - arg->t);
+			dprintf("%s %lu %.3f+%.3f+%.3f+%.3f+%.3f=%.3fms\n", reqinfo, CGIG(response_length), t - arg->t, t2 - t, t3 - t2, t4 - t3, t5 - t4, t5 - arg->t);
+			printf("[%s] %d %s %lu %.3f+%.3f+%.3f+%.3f+%.3f=%.3fms\n", gettimeofstr(), pthread_tid, reqinfo, CGIG(response_length), t - arg->t, t2 - t, t3 - t2, t4 - t3, t5 - t4, t5 - arg->t);
 			fflush(stdout);
 		}
 
