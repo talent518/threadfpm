@@ -4247,12 +4247,17 @@ consult the installation file that came with this distribution, or visit \n\
 	sem_destroy(&rsem);
 
 	if(isReload) {
+		fprintf(stderr, "[%s] The server reloading\n", gettimeofstr());
+		fflush(stderr);
+
 		char **args = (char**) malloc(sizeof(char*)*(argc+1));
 		memcpy(args, argv, sizeof(char*)*argc);
 		args[argc] = NULL;
-		fprintf(stderr, "[%s] The server reloading\n", gettimeofstr());
-		fflush(stderr);
-		execv(argv[0], args);
+		char path[PATH_MAX];
+		size_t sz = readlink("/proc/self/exe", path, PATH_MAX);
+		path[sz] = '\0';
+		execv(path, args);
+		perror("execv");
 	}
 
 out:
