@@ -266,6 +266,7 @@ typedef struct _php_cgi_globals_struct {
 	char *redirect_status_env;
 	HashTable user_config_cache;
 	char *error_header;
+	zval z_fd_close;
 } php_cgi_globals_struct;
 
 /* {{{ user_config_cache
@@ -1487,6 +1488,7 @@ static void php_cgi_globals_ctor(php_cgi_globals_struct *php_cgi_globals)
 	php_cgi_globals->body_fd = -1;
 	php_cgi_globals->is_accept = 0;
 	php_cgi_globals->response_length = 0;
+	ZVAL_PSTRING(&php_cgi_globals->z_fd_close, "ts_var_fd_close");
 }
 /* }}} */
 
@@ -1497,6 +1499,7 @@ static void php_cgi_globals_dtor(php_cgi_globals_struct *php_cgi_globals)
 	// php_cgi_globals->redirect_status_env = NULL;
 	// php_cgi_globals->error_header = NULL;
 	zend_hash_destroy(&php_cgi_globals->user_config_cache);
+	zval_ptr_dtor(&php_cgi_globals->z_fd_close);
 }
 /* }}} */
 
@@ -2895,10 +2898,12 @@ static PHP_FUNCTION(ts_var_fd) {
 	}
 	
 	if(Z_TYPE_P(return_value) != IS_FALSE) {
-		ZVAL_STRING(&shutdown_function_entry.function_name, "ts_var_fd_close");
-		shutdown_function_entry.arg_count = 1;
-		shutdown_function_entry.arguments = (zval *) safe_emalloc(sizeof(zval), shutdown_function_entry.arg_count, 0);
-		ZVAL_ZVAL(&shutdown_function_entry.arguments[0], return_value, 1, 0);
+		char *error = NULL;
+		zend_fcall_info_init(&CGIG(z_fd_close), 0, &shutdown_function_entry.fci, &shutdown_function_entry.fci_cache, NULL, &error);
+		zend_release_fcall_info_cache(&shutdown_function_entry.fci_cache);
+		shutdown_function_entry.fci.param_count = 1;
+		shutdown_function_entry.fci.params = (zval *) safe_emalloc(sizeof(zval), shutdown_function_entry.fci.param_count, 0);
+		ZVAL_ZVAL(&shutdown_function_entry.fci.params[0], return_value, 1, 0);
 		
 		append_user_shutdown_function(&shutdown_function_entry);
 	}
