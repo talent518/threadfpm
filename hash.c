@@ -91,6 +91,7 @@ void hash_table_value_free(value_t *value) {
 		break;
 	}
 	value->type = NULL_T;
+	value->l = 0;
 	value->expire = 0;
 }
 
