@@ -19,11 +19,7 @@ typedef struct string_t {
 typedef enum {
 	NULL_T=0,
 	BOOL_T,
-	CHAR_T,
-	SHORT_T,
-	INT_T,
 	LONG_T,
-	FLOAT_T,
 	DOUBLE_T,
 	STR_T,
 	HT_T,
