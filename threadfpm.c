@@ -2805,6 +2805,31 @@ static PHP_FUNCTION(ts_var_fd) {
 	}
 }
 
+ZEND_BEGIN_ARG_INFO(arginfo_ts_var_expire, 2)
+ZEND_ARG_TYPE_INFO(0, res, IS_RESOURCE, 0)
+ZEND_ARG_TYPE_INFO(0, expire, IS_LONG, 0)
+ZEND_END_ARG_INFO()
+
+static PHP_FUNCTION(ts_var_expire) {
+	zval *zv;
+	zend_long expire = 0;
+	
+	ts_hash_table_t *ts_ht;
+
+	ZEND_PARSE_PARAMETERS_START(2, 2)
+		Z_PARAM_RESOURCE(zv)
+		Z_PARAM_LONG(expire)
+	ZEND_PARSE_PARAMETERS_END();
+	
+	if ((ts_ht = (ts_hash_table_t *) zend_fetch_resource_ex(zv, PHP_TS_VAR_DESCRIPTOR, le_ts_var_descriptor)) == NULL) {
+		RETURN_FALSE;
+	}
+
+	ts_hash_table_wr_lock(ts_ht);
+	ts_ht->expire = expire;
+	ts_hash_table_wr_unlock(ts_ht);
+}
+
 ZEND_BEGIN_ARG_INFO(arginfo_ts_var_exists, 1)
 ZEND_ARG_TYPE_INFO(0, res, IS_RESOURCE, 0)
 ZEND_ARG_INFO(0, key)
@@ -2984,6 +3009,50 @@ static PHP_FUNCTION(ts_var_shift) {
 	ts_hash_table_wr_unlock(ts_ht);
 }
 
+ZEND_BEGIN_ARG_INFO(arginfo_ts_var_minmax, 1)
+ZEND_ARG_TYPE_INFO(0, res, IS_RESOURCE, 0)
+ZEND_ARG_TYPE_INFO(0, is_max, _IS_BOOL, 0)
+ZEND_ARG_TYPE_INFO(0, is_key, _IS_BOOL, 0)
+ZEND_ARG_INFO(1, key)
+ZEND_END_ARG_INFO()
+
+static PHP_FUNCTION(ts_var_minmax) {
+	zval *zv;
+	zval *key = NULL;
+	zend_bool is_max = 0, is_key = 0;
+	
+	ts_hash_table_t *ts_ht;
+	bucket_t *p = NULL;
+
+	ZEND_PARSE_PARAMETERS_START(1, 4)
+		Z_PARAM_RESOURCE(zv)
+		Z_PARAM_OPTIONAL
+		Z_PARAM_BOOL(is_max)
+		Z_PARAM_BOOL(is_key)
+		Z_PARAM_ZVAL_DEREF(key)
+	ZEND_PARSE_PARAMETERS_END();
+	
+	if ((ts_ht = (ts_hash_table_t *) zend_fetch_resource_ex(zv, PHP_TS_VAR_DESCRIPTOR, le_ts_var_descriptor)) == NULL) {
+		RETURN_FALSE;
+	}
+	
+	ts_hash_table_rd_lock(ts_ht);
+	if(hash_table_minmax(&ts_ht->ht, is_key ? compare_key : compare_value, is_max, &p) == SUCCESS) {
+		value_to_zval(&p->value, return_value);
+		if(key) {
+			zval_ptr_dtor(key);
+			if(p->nKeyLength == 0) {
+				ZVAL_LONG(key, p->h);
+			} else {
+				ZVAL_STRINGL(key, p->arKey, p->nKeyLength);
+			}
+		}
+	} else {
+		RETVAL_FALSE;
+	}
+	ts_hash_table_rd_unlock(ts_ht);
+}
+
 ZEND_BEGIN_ARG_INFO(arginfo_ts_var_get, 1)
 ZEND_ARG_TYPE_INFO(0, res, IS_RESOURCE, 0)
 ZEND_ARG_INFO(0, key)
@@ -3043,6 +3112,104 @@ static PHP_FUNCTION(ts_var_get) {
 			}
 		}
 		ts_hash_table_rd_unlock(ts_ht);
+	}
+}
+
+ZEND_BEGIN_ARG_INFO(arginfo_ts_var_get_or_set, 3)
+ZEND_ARG_TYPE_INFO(0, res, IS_RESOURCE, 0)
+ZEND_ARG_INFO(0, key)
+ZEND_ARG_INFO(0, callback)
+ZEND_ARG_TYPE_INFO(0, expire, IS_LONG, 0)
+ZEND_ARG_VARIADIC_INFO(0, parameters)
+ZEND_END_ARG_INFO()
+
+static PHP_FUNCTION(ts_var_get_or_set) {
+	zval *zv;
+	zend_string *key = NULL;
+	zend_long index = 0;
+
+	zval retval;
+	zend_fcall_info fci;
+	zend_fcall_info_cache fci_cache;
+
+	zend_long expire = 0;
+	
+	ts_hash_table_t *ts_ht;
+	value_t v;
+
+	ZEND_PARSE_PARAMETERS_START(3, -1)
+		Z_PARAM_RESOURCE(zv)
+		Z_PARAM_STR_OR_LONG(key, index)
+		Z_PARAM_FUNC(fci, fci_cache)
+		Z_PARAM_OPTIONAL
+		Z_PARAM_LONG(expire);
+	#if PHP_VERSION_ID >= 80000
+		Z_PARAM_VARIADIC_WITH_NAMED(fci.params, fci.param_count, fci.named_params)
+	#else
+		Z_PARAM_VARIADIC('*', fci.params, fci.param_count)
+	#endif
+	ZEND_PARSE_PARAMETERS_END();
+	
+	if ((ts_ht = (ts_hash_table_t *) zend_fetch_resource_ex(zv, PHP_TS_VAR_DESCRIPTOR, le_ts_var_descriptor)) == NULL) {
+		RETURN_FALSE;
+	}
+	
+	fci.retval = &retval;
+
+	ts_hash_table_rd_lock(ts_ht);
+	if(key) {
+		zend_long h = zend_get_hash_value(ZSTR_VAL(key), ZSTR_LEN(key));
+		if(hash_table_quick_find(&ts_ht->ht, ZSTR_VAL(key), ZSTR_LEN(key), h, &v) == SUCCESS) {
+			value_to_zval(&v, return_value);
+			ts_hash_table_rd_unlock(ts_ht);
+		} else {
+			ts_hash_table_rd_unlock(ts_ht);
+			ts_hash_table_wr_lock(ts_ht);
+			if(hash_table_quick_find(&ts_ht->ht, ZSTR_VAL(key), ZSTR_LEN(key), h, &v) == SUCCESS) {
+				value_to_zval(&v, return_value);
+			} else {
+				zend_try {
+					if (zend_call_function(&fci, &fci_cache) == SUCCESS && Z_TYPE(retval) != IS_UNDEF) {
+						if (Z_ISREF(retval)) {
+							zend_unwrap_reference(&retval);
+						}
+						zval_to_value(&retval, &v);
+						v.expire = expire;
+						hash_table_quick_update(&ts_ht->ht, ZSTR_VAL(key), ZSTR_LEN(key), h, &v, NULL);
+						ZVAL_COPY_VALUE(return_value, &retval);
+					}
+				} zend_catch {
+					EG(exit_status) = 0;
+				} zend_end_try();
+			}
+			ts_hash_table_wr_unlock(ts_ht);
+		}
+	} else {
+		if(hash_table_index_find(&ts_ht->ht, index, &v) == SUCCESS) {
+			value_to_zval(&v, return_value);
+			ts_hash_table_rd_unlock(ts_ht);
+		} else {
+			ts_hash_table_rd_unlock(ts_ht);
+			ts_hash_table_wr_lock(ts_ht);
+			if(hash_table_index_find(&ts_ht->ht, index, &v) == SUCCESS) {
+				value_to_zval(&v, return_value);
+			} else {
+				zend_try {
+					if (zend_call_function(&fci, &fci_cache) == SUCCESS && Z_TYPE(retval) != IS_UNDEF) {
+						if (Z_ISREF(retval)) {
+							zend_unwrap_reference(&retval);
+						}
+						zval_to_value(&retval, &v);
+						v.expire = expire;
+						hash_table_index_update(&ts_ht->ht, index, &v, NULL);
+						ZVAL_COPY_VALUE(return_value, &retval);
+					}
+				} zend_catch {
+					EG(exit_status) = 0;
+				} zend_end_try();
+			}
+			ts_hash_table_wr_unlock(ts_ht);
+		}
 	}
 }
 
@@ -3241,13 +3408,16 @@ static const zend_function_entry cgi_fcgi_sapi_functions[] = {
 
 	PHP_FE(ts_var_declare, arginfo_ts_var_declare)
 	PHP_FE(ts_var_fd, arginfo_ts_var_fd)
+	PHP_FE(ts_var_expire, arginfo_ts_var_expire)
 	PHP_FE(ts_var_exists, arginfo_ts_var_exists)
 	PHP_FE(ts_var_set, arginfo_ts_var_set)
 	PHP_FALIAS(ts_var_put, ts_var_set, arginfo_ts_var_set)
 	PHP_FE(ts_var_push, arginfo_ts_var_push)
 	PHP_FE(ts_var_pop, arginfo_ts_var_pop)
 	PHP_FE(ts_var_shift, arginfo_ts_var_shift)
+	PHP_FE(ts_var_minmax, arginfo_ts_var_minmax)
 	PHP_FE(ts_var_get, arginfo_ts_var_get)
+	PHP_FE(ts_var_get_or_set, arginfo_ts_var_get_or_set)
 	PHP_FE(ts_var_del, arginfo_ts_var_del)
 	PHP_FE(ts_var_inc, arginfo_ts_var_inc)
 	PHP_FE(ts_var_count, arginfo_ts_var_count)
