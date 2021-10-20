@@ -1744,20 +1744,8 @@ static int hash_table_to_zval(bucket_t *p, zval *a) {
 			case BOOL_T:
 				add_index_bool(a, p->h, p->value.b);
 				break;
-			case CHAR_T:
-				add_index_long(a, p->h, p->value.c);
-				break;
-			case SHORT_T:
-				add_index_long(a, p->h, p->value.s);
-				break;
-			case INT_T:
-				add_index_long(a, p->h, p->value.i);
-				break;
 			case LONG_T:
 				add_index_long(a, p->h, p->value.l);
-				break;
-			case FLOAT_T:
-				add_index_double(a, p->h, p->value.f);
 				break;
 			case DOUBLE_T:
 				add_index_double(a, p->h, p->value.d);
@@ -1795,20 +1783,8 @@ static int hash_table_to_zval(bucket_t *p, zval *a) {
 			case BOOL_T:
 				add_assoc_bool_ex(a, p->arKey, p->nKeyLength, p->value.b);
 				break;
-			case CHAR_T:
-				add_assoc_long_ex(a, p->arKey, p->nKeyLength, p->value.c);
-				break;
-			case SHORT_T:
-				add_assoc_long_ex(a, p->arKey, p->nKeyLength, p->value.s);
-				break;
-			case INT_T:
-				add_assoc_long_ex(a, p->arKey, p->nKeyLength, p->value.i);
-				break;
 			case LONG_T:
 				add_assoc_long_ex(a, p->arKey, p->nKeyLength, p->value.l);
-				break;
-			case FLOAT_T:
-				add_assoc_double_ex(a, p->arKey, p->nKeyLength, p->value.f);
 				break;
 			case DOUBLE_T:
 				add_assoc_double_ex(a, p->arKey, p->nKeyLength, p->value.d);
@@ -1848,20 +1824,8 @@ void value_to_zval(value_t *v, zval *return_value) {
 		case BOOL_T:
 			RETVAL_BOOL(v->b);
 			break;
-		case CHAR_T:
-			RETVAL_LONG(v->c);
-			break;
-		case SHORT_T:
-			RETVAL_LONG(v->s);
-			break;
-		case INT_T:
-			RETVAL_LONG(v->i);
-			break;
 		case LONG_T:
 			RETVAL_LONG(v->l);
-			break;
-		case FLOAT_T:
-			RETVAL_DOUBLE(v->f);
 			break;
 		case DOUBLE_T:
 			RETVAL_DOUBLE(v->d);
@@ -2010,6 +1974,7 @@ static void zval_to_value(zval *z, value_t *v) {
 			break;
 		default:
 			v->type = NULL_T;
+			v->l = 0;
 			break;
 	}
 }
@@ -2146,24 +2111,8 @@ static PHP_FUNCTION(share_var_put)
 			dst->v = dst->b + src->k;\
 			dst->type = t;\
 			break; \
-		case CHAR_T: \
-			dst->v = dst->c + src->k;\
-			dst->type = t; \
-			break; \
-		case SHORT_T: \
-			dst->v = dst->s + src->k;\
-			dst->type = t; \
-			break; \
-		case INT_T: \
-			dst->v = dst->i + src->k;\
-			dst->type = t; \
-			break; \
 		case LONG_T: \
 			dst->l = dst->l + src->k;\
-			break; \
-		case FLOAT_T: \
-			dst->v = dst->f + src->k;\
-			dst->type = t; \
 			break; \
 		case DOUBLE_T: \
 			dst->d = dst->d + src->k;\
@@ -2180,22 +2129,10 @@ static void value_add(value_t *dst, value_t *src) {
 	} else {
 		switch(src->type) {
 			case BOOL_T:
-				VALUE_ADD(b,i,INT_T);
-				break;
-			case CHAR_T:
-				VALUE_ADD(c,i,INT_T);
-				break;
-			case SHORT_T:
-				VALUE_ADD(s,i,INT_T);
-				break;
-			case INT_T:
-				VALUE_ADD(i,i,INT_T);
+				VALUE_ADD(b,l,LONG_T);
 				break;
 			case LONG_T:
 				VALUE_ADD(l,l,LONG_T);
-				break;
-			case FLOAT_T:
-				VALUE_ADD(f,f,FLOAT_T);
 				break;
 			case DOUBLE_T:
 				VALUE_ADD(d,d,DOUBLE_T);
@@ -2636,20 +2573,8 @@ static int hash_table_to_zval_wr(bucket_t *p, zval *a) {
 			case BOOL_T:
 				add_index_bool(a, p->h, p->value.b);
 				break;
-			case CHAR_T:
-				add_index_long(a, p->h, p->value.c);
-				break;
-			case SHORT_T:
-				add_index_long(a, p->h, p->value.s);
-				break;
-			case INT_T:
-				add_index_long(a, p->h, p->value.i);
-				break;
 			case LONG_T:
 				add_index_long(a, p->h, p->value.l);
-				break;
-			case FLOAT_T:
-				add_index_double(a, p->h, p->value.f);
 				break;
 			case DOUBLE_T:
 				add_index_double(a, p->h, p->value.d);
@@ -2687,20 +2612,8 @@ static int hash_table_to_zval_wr(bucket_t *p, zval *a) {
 			case BOOL_T:
 				add_assoc_bool_ex(a, p->arKey, p->nKeyLength, p->value.b);
 				break;
-			case CHAR_T:
-				add_assoc_long_ex(a, p->arKey, p->nKeyLength, p->value.c);
-				break;
-			case SHORT_T:
-				add_assoc_long_ex(a, p->arKey, p->nKeyLength, p->value.s);
-				break;
-			case INT_T:
-				add_assoc_long_ex(a, p->arKey, p->nKeyLength, p->value.i);
-				break;
 			case LONG_T:
 				add_assoc_long_ex(a, p->arKey, p->nKeyLength, p->value.l);
-				break;
-			case FLOAT_T:
-				add_assoc_double_ex(a, p->arKey, p->nKeyLength, p->value.f);
 				break;
 			case DOUBLE_T:
 				add_assoc_double_ex(a, p->arKey, p->nKeyLength, p->value.d);
@@ -2740,20 +2653,8 @@ void value_to_zval_wr(value_t *v, zval *return_value) {
 		case BOOL_T:
 			RETVAL_BOOL(v->b);
 			break;
-		case CHAR_T:
-			RETVAL_LONG(v->c);
-			break;
-		case SHORT_T:
-			RETVAL_LONG(v->s);
-			break;
-		case INT_T:
-			RETVAL_LONG(v->i);
-			break;
 		case LONG_T:
 			RETVAL_LONG(v->l);
-			break;
-		case FLOAT_T:
-			RETVAL_DOUBLE(v->f);
 			break;
 		case DOUBLE_T:
 			RETVAL_DOUBLE(v->d);
