@@ -7,6 +7,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <php.h>
 #include <zend_types.h>
 
 typedef unsigned long int ulong;
@@ -32,11 +33,7 @@ typedef struct value_t {
 	int expire;
 	union {
 		zend_bool b;
-		char c;
-		short s;
-		int i;
 		long int l;
-		float f;
 		double d;
 		string_t *str;
 		void *ptr;
@@ -61,48 +58,43 @@ typedef struct hash_table_t {
 	uint nTableMask;
 	uint nNumOfElements;
 	ulong nNextFreeElement;
-	bucket_t *pInternalPointer;	/* Used for element traversal */
 	bucket_t *pListHead;
 	bucket_t *pListTail;
 	bucket_t **arBuckets;
 	hash_dtor_func_t pDestructor;
-	unsigned char nApplyCount;
-	zend_bool bApplyProtection;
 } hash_table_t;
 
 void hash_table_value_free(value_t *value);
 
 /* startup/shutdown */
-int _hash_table_init(hash_table_t *ht, uint nSize, hash_dtor_func_t pDestructor, zend_bool bApplyProtection);
+int _hash_table_init(hash_table_t *ht, uint nSize, hash_dtor_func_t pDestructor);
 void hash_table_destroy(hash_table_t *ht);
 void hash_table_clean(hash_table_t *ht);
-#define hash_table_init(ht, nSize)                                       _hash_table_init((ht), (nSize), hash_table_value_free, 0)
-#define hash_table_init_ex(ht, nSize, pDestructor, bApplyProtection)     _hash_table_init((ht), (nSize), (pDestructor), (bApplyProtection))
-
-void hash_table_set_apply_protection(hash_table_t *ht, zend_bool bApplyProtection);
+#define hash_table_init(ht, nSize)                  _hash_table_init((ht), (nSize), hash_table_value_free)
+#define hash_table_init_ex(ht, nSize, pDestructor)  _hash_table_init((ht), (nSize), (pDestructor))
 
 #define HASH_TABLE_ADD           1
 #define HASH_TABLE_UPDATE        2
 #define HASH_TABLE_NEXT_INSERT   4
 
 /* additions/updates/changes */
-int _hash_table_add_or_update(hash_table_t *ht, const char *arKey, uint nKeyLength, value_t *pData, value_t *pDest, int flag);
+int _hash_table_add_or_update(hash_table_t *ht, const char *arKey, uint nKeyLength, value_t *pData, int flag);
 #define hash_table_update(ht, arKey, nKeyLength, pData, pDest) \
-		_hash_table_add_or_update(ht, arKey, nKeyLength, pData, pDest, HASH_TABLE_UPDATE)
+		_hash_table_add_or_update(ht, arKey, nKeyLength, pData, HASH_TABLE_UPDATE)
 #define hash_table_add(ht, arKey, nKeyLength, pData, pDest) \
-		_hash_table_add_or_update(ht, arKey, nKeyLength, pData, pDest, HASH_TABLE_ADD)
+		_hash_table_add_or_update(ht, arKey, nKeyLength, pData, HASH_TABLE_ADD)
 
-int _hash_table_quick_add_or_update(hash_table_t *ht, const char *arKey, uint nKeyLength, ulong h, value_t *pData, value_t *pDest, int flag);
+int _hash_table_quick_add_or_update(hash_table_t *ht, const char *arKey, uint nKeyLength, ulong h, value_t *pData, int flag);
 #define hash_table_quick_update(ht, arKey, nKeyLength, h, pData, pDest) \
-		_hash_table_quick_add_or_update(ht, arKey, nKeyLength, h, pData, pDest, HASH_TABLE_UPDATE)
+		_hash_table_quick_add_or_update(ht, arKey, nKeyLength, h, pData, HASH_TABLE_UPDATE)
 #define hash_table_quick_add(ht, arKey, nKeyLength, h, pData, pDest) \
-		_hash_table_quick_add_or_update(ht, arKey, nKeyLength, h, pData, pDest, HASH_TABLE_ADD)
+		_hash_table_quick_add_or_update(ht, arKey, nKeyLength, h, pData, HASH_TABLE_ADD)
 
-int _hash_table_index_update_or_next_insert(hash_table_t *ht, ulong h, value_t *pData, value_t *pDest, int flag);
+int _hash_table_index_update_or_next_insert(hash_table_t *ht, ulong h, value_t *pData, int flag);
 #define hash_table_index_update(ht, h, pData, pDest) \
-		_hash_table_index_update_or_next_insert(ht, h, pData, pDest, HASH_TABLE_UPDATE)
+		_hash_table_index_update_or_next_insert(ht, h, pData, HASH_TABLE_UPDATE)
 #define hash_table_next_index_insert(ht, pData, pDest) \
-		_hash_table_index_update_or_next_insert(ht, 0, pData, pDest, HASH_TABLE_NEXT_INSERT)
+		_hash_table_index_update_or_next_insert(ht, 0, pData, HASH_TABLE_NEXT_INSERT)
 
 #define HASH_TABLE_APPLY_KEEP				1
 #define HASH_TABLE_APPLY_REMOVE				2
@@ -168,9 +160,6 @@ static zend_always_inline void hash_table_bucket_delete(hash_table_t *ht, bucket
 		/* Deleting the tail of the list */
 		ht->pListTail = p->pListLast;
 	}
-	if (ht->pInternalPointer == p) {
-		ht->pInternalPointer = p->pListNext;
-	}
 	ht->nNumOfElements--;
 	if (ht->pDestructor) {
 		ht->pDestructor(&p->value);
@@ -178,85 +167,157 @@ static zend_always_inline void hash_table_bucket_delete(hash_table_t *ht, bucket
 	free(p);
 }
 
+typedef int (*hash_compare_func_t)(const bucket_t *a, const bucket_t *b);
+
+int compare_key(const bucket_t *a, const bucket_t *b);
+int compare_value(const bucket_t *a, const bucket_t *b);
+int hash_table_minmax(const hash_table_t *ht, hash_compare_func_t compar, int flag, bucket_t **ret);
+
 // ===========================================================================================================
 
 #include <pthread.h>
+#include <time.h>
+#include <zend_exceptions.h>
+
+#if defined(LOCK_TIMEOUT) && LOCK_TIMEOUT <= 0
+#undef LOCK_TIMEOUT
+#endif
+
+#ifdef LOCK_TIMEOUT
+typedef struct _tskey_hash_table_t {
+	hash_table_t ht;
+	pthread_mutex_t lock;
+} tskey_hash_table_t;
+#endif
 
 typedef struct ts_hash_table_t {
 	hash_table_t ht;
-	volatile int rd_count;
-	volatile int ref_count; // reference count
-	pthread_mutex_t rlock;
+	int expire;
+	volatile unsigned short rd_count;
+	volatile unsigned short ref_count; // reference count
 	pthread_mutex_t wlock;
-	pthread_mutex_t lock;
+	pthread_mutex_t rlock;
 	int fds[2];
+#ifdef LOCK_TIMEOUT
+	tskey_hash_table_t *tsht;
+	ulong h;
+#endif
 } ts_hash_table_t;
 
-static zend_always_inline int _ts_hash_table_init(ts_hash_table_t *ts_ht, uint nSize, hash_dtor_func_t pDestructor, zend_bool bApplyProtection) {
+static zend_always_inline int _ts_hash_table_init(ts_hash_table_t *ts_ht, uint nSize, hash_dtor_func_t pDestructor) {
 	ts_ht->rd_count = 0;
 	ts_ht->ref_count = 1;
 	ts_ht->fds[0] = 0;
 	ts_ht->fds[1] = 0;
+	ts_ht->expire = 0;
+#ifdef LOCK_TIMEOUT
+	ts_ht->tsht = NULL;
+	ts_ht->h = hash_table_func((const char*) &ts_ht, sizeof(void*));
+#endif
 	pthread_mutex_init(&ts_ht->rlock, NULL);
 	pthread_mutex_init(&ts_ht->wlock, NULL);
-	pthread_mutex_init(&ts_ht->lock, NULL);
-	return _hash_table_init(&ts_ht->ht, nSize, pDestructor, bApplyProtection);
+	return _hash_table_init(&ts_ht->ht, nSize, pDestructor);
 }
 
-#define ts_hash_table_init(ht, nSize)                                       _ts_hash_table_init((ht), (nSize), hash_table_value_free, 0)
-#define ts_hash_table_init_ex(ht, nSize, pDestructor, bApplyProtection)     _ts_hash_table_init((ht), (nSize), (pDestructor), (bApplyProtection))
+#define ts_hash_table_init(ht, nSize)                  _ts_hash_table_init((ht), (nSize), hash_table_value_free)
+#define ts_hash_table_init_ex(ht, nSize, pDestructor)  _ts_hash_table_init((ht), (nSize), (pDestructor))
+
+static zend_always_inline void ts_hash_table_lock(ts_hash_table_t *ts_ht) {
+	pthread_mutex_lock(&ts_ht->rlock);
+}
+
+static zend_always_inline void ts_hash_table_unlock(ts_hash_table_t *ts_ht) {
+	pthread_mutex_unlock(&ts_ht->rlock);
+}
+
+#ifdef LOCK_TIMEOUT
+extern pthread_key_t tskey;
+void ts_table_table_tid_destroy(void *hh);
+long int ts_table_table_tid_inc(ts_hash_table_t *hh);
+long int ts_table_table_tid_dec_ex(tskey_hash_table_t *tsht, ts_hash_table_t *hh);
+#define ts_table_table_tid_dec(ht) ts_table_table_tid_dec_ex(pthread_getspecific(tskey), ht)
+const char *gettimeofstr();
+void ts_hash_table_deadlock(const char *msg);
+#endif
+
+static zend_always_inline void ts_hash_table_wr_lock(ts_hash_table_t *ts_ht) {
+#ifndef LOCK_TIMEOUT
+	pthread_mutex_lock(&ts_ht->wlock);
+#else
+	// printf("%p   lock\n", ts_ht);
+	struct timespec ts;
+	clock_gettime(CLOCK_REALTIME, &ts);
+	ts.tv_sec += LOCK_TIMEOUT;
+	if(pthread_mutex_timedlock(&ts_ht->wlock, &ts)) {
+		if(ts_table_table_tid_inc(ts_ht) == 1) {
+			ts_hash_table_deadlock("Deadlock caused by shared variables");
+		} else {
+			ts_hash_table_deadlock("Repeated locking of shared variables");
+		}
+		pthread_mutex_lock(&ts_ht->wlock);
+	} else {
+		ts_table_table_tid_inc(ts_ht);
+	}
+	ts_ht->tsht = pthread_getspecific(tskey);
+#endif
+}
+
+static zend_always_inline void ts_hash_table_wr_unlock(ts_hash_table_t *ts_ht) {
+#ifndef LOCK_TIMEOUT
+	pthread_mutex_unlock(&ts_ht->wlock);
+#else
+	long int i = ts_table_table_tid_dec(ts_ht);
+	if(i == 0) {
+		ts_ht->tsht = NULL;
+		// printf("%p unlock\n", ts_ht);
+		pthread_mutex_unlock(&ts_ht->wlock);
+	} else if(i < 0) {
+		i = ts_table_table_tid_dec_ex(ts_ht->tsht, ts_ht);
+		if(i == 0) {
+			ts_ht->tsht = NULL;
+			// printf("%p unlock\n", ts_ht);
+			pthread_mutex_unlock(&ts_ht->wlock);
+		} else if(i < 0) {
+			ts_hash_table_deadlock("Shared variable unlocking exception");
+		}
+	}
+#endif
+}
 
 static zend_always_inline void ts_hash_table_rd_lock(ts_hash_table_t *ts_ht) {
 	pthread_mutex_lock(&ts_ht->rlock);
-	if(++ts_ht->rd_count == 1) pthread_mutex_lock(&ts_ht->wlock);
+	if((++ts_ht->rd_count) == 1) ts_hash_table_wr_lock(ts_ht);
 	pthread_mutex_unlock(&ts_ht->rlock);
 }
 
 static zend_always_inline void ts_hash_table_rd_unlock(ts_hash_table_t *ts_ht) {
 	pthread_mutex_lock(&ts_ht->rlock);
-	if(--ts_ht->rd_count == 0) pthread_mutex_unlock(&ts_ht->wlock);
+	if((--ts_ht->rd_count) == 0) ts_hash_table_wr_unlock(ts_ht);
 	pthread_mutex_unlock(&ts_ht->rlock);
 }
 
-static zend_always_inline void ts_hash_table_wr_lock(ts_hash_table_t *ts_ht) {
-	pthread_mutex_lock(&ts_ht->wlock);
-}
-
-static zend_always_inline void ts_hash_table_wr_unlock(ts_hash_table_t *ts_ht) {
-	pthread_mutex_unlock(&ts_ht->wlock);
-}
-
-static zend_always_inline void ts_hash_table_lock(ts_hash_table_t *ts_ht) {
-	pthread_mutex_lock(&ts_ht->lock);
-}
-
-static zend_always_inline void ts_hash_table_unlock(ts_hash_table_t *ts_ht) {
-	pthread_mutex_unlock(&ts_ht->lock);
-}
-
 static zend_always_inline void ts_hash_table_ref(ts_hash_table_t *ts_ht) {
-	pthread_mutex_lock(&ts_ht->lock);
+	ts_hash_table_lock(ts_ht);
 	ts_ht->ref_count++;
-	pthread_mutex_unlock(&ts_ht->lock);
+	ts_hash_table_unlock(ts_ht);
 }
 
 #define ts_hash_table_unref(ts_ht) ts_hash_table_destroy(ts_ht)
 
 static zend_always_inline void ts_hash_table_destroy_ex(ts_hash_table_t *ts_ht, int is_free) {
-	pthread_mutex_lock(&ts_ht->lock);
+	ts_hash_table_lock(ts_ht);
 	if(--ts_ht->ref_count == 0) {
-		pthread_mutex_unlock(&ts_ht->lock);
+		ts_hash_table_unlock(ts_ht);
 
 		if(ts_ht->fds[0] > 0) close(ts_ht->fds[0]);
 		if(ts_ht->fds[1] > 0) close(ts_ht->fds[1]);
 
 		pthread_mutex_destroy(&ts_ht->rlock);
 		pthread_mutex_destroy(&ts_ht->wlock);
-		pthread_mutex_destroy(&ts_ht->lock);
 		hash_table_destroy(&ts_ht->ht);
 		
 		if(is_free) free(ts_ht);
-	} else pthread_mutex_unlock(&ts_ht->lock);
+	} else ts_hash_table_unlock(ts_ht);
 }
 
 #define ts_hash_table_destroy(ts_ht) ts_hash_table_destroy_ex(ts_ht, 1)
