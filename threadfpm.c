@@ -3541,7 +3541,7 @@ static int fcgi_fd = 0;
 static unsigned int nthreads = 0, naccepts = 0;
 static pthread_mutex_t lock, wlock;
 static pthread_cond_t cond;
-static sem_t rsem, wsem;
+static sem_t rsem;
 static unsigned int nrequests = 0;
 static unsigned int requests = 0;
 static thread_arg_t *head_request = NULL, *tail_request = NULL;
@@ -3571,8 +3571,6 @@ static void *thread_request(void*_) {
 	thread_sigmask();
 
 	ts_resource(0);
-	
-	sem_wait(&wsem);
 
 	dprintf("thread begin\n");
 
@@ -3784,8 +3782,6 @@ static zend_bool create_thread(void*(*handler)(void*), void* arg) {
 		errno = ret;
 		perror("pthread_create() is error");
 		errno = 0;
-	} else {
-		sem_post(&wsem);
 	}
 	pthread_attr_destroy(&attr);
 
@@ -3808,8 +3804,6 @@ static void *thread_accept(void*_i) {
 	thread_sigmask();
 
 	ts_resource(0);
-
-	sem_wait(&wsem);
 	
 	CGIG(is_accept) = 1;
 	
@@ -4273,8 +4267,7 @@ consult the installation file that came with this distribution, or visit \n\
 	pthread_mutex_init(&wlock, NULL);
 	pthread_cond_init(&cond, NULL);
 	sem_init(&rsem, 0, 0);
-	sem_init(&wsem, 0, 0);
-	
+
 	share_var_init();
 	ts_hash_table_init(&ts_var, 2);
 
@@ -4389,7 +4382,6 @@ consult the installation file that came with this distribution, or visit \n\
 	pthread_cond_destroy(&cond);
 	pthread_mutex_destroy(&wlock);
 	pthread_mutex_destroy(&lock);
-	sem_destroy(&wsem);
 	sem_destroy(&rsem);
 
 	if(isReload) {
