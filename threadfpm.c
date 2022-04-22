@@ -251,6 +251,7 @@ static const opt_struct OPTIONS[] = {
 	{'r', 1, "max-requests"},
 	{'p', 1, "path"},
 	{'b', 1, "backlog"},
+	{'f', 1, "phpfile"},
 #ifdef THREADFPM_DEBUG
 	{'D', 0, "debug"},
 #endif
@@ -398,13 +399,15 @@ static inline size_t sapi_cgibin_single_write(const char *str, uint32_t str_leng
 	/* sapi has started which means everyhting must be send through fcgi */
 	if (fpm_is_running) {
 		fcgi_request *request = (fcgi_request*) SG(server_context);
+		
+		if(request) {
+			ret = fcgi_write(request, FCGI_STDOUT, str, str_length);
+			if (ret <= 0) {
+				return 0;
+			}
 
-		ret = fcgi_write(request, FCGI_STDOUT, str, str_length);
-		if (ret <= 0) {
-			return 0;
+			return (size_t)ret;
 		}
-
-		return (size_t)ret;
 	}
 
 	/* sapi has not started, output to stdout instead of fcgi */
@@ -413,10 +416,10 @@ static inline size_t sapi_cgibin_single_write(const char *str, uint32_t str_leng
 	if (ret <= 0) {
 		return 0;
 	}
-	return (size_t)ret;
 #else
-	return fwrite(str, 1, MIN(str_length, 16384), stdout);
+	ret = fwrite(str, 1, str_length, stdout);
 #endif
+	return (size_t)ret;
 }
 /* }}} */
 
@@ -969,7 +972,7 @@ static void php_cgi_usage(char *argv0)
 		prog = "php";
 	}
 
-	php_printf(	"Usage: %s [-n] [-e] [-h] [-i] [-m] [-v] [-R] [[-P <pidfile>] -u <user>] [-a <accepts>] [-t <threads>] [-I <idleseconds>] [-r <max requests>] [-p <path>|<host:port>] [-b backlog]"
+	php_printf(	"Usage: %s [-n] [-e] [-h] [-i] [-m] [-v] [-R] [[-P <pidfile>] -u <user>] [-a <accepts>] [-t <threads>] [-I <idleseconds>] [-r <max requests>] [-p <path>|<host:port>] [-b backlog] [-f phpfile]"
 			#ifdef THREADFPM_DEBUG
 				" [-D]"
 			#endif
@@ -992,6 +995,7 @@ static void php_cgi_usage(char *argv0)
 				"  -p <path>         Listen for unix socket\n"
 				"  -p <host:port>    Listen for tcp"
 				"  -b backlog        The backlog argument defines the maximum length to which the queue of pending connections for sockfd may grow.\n"
+				"  -f phpfile        This PHP file runs on a separate thread.\n"
 			#ifdef THREADFPM_DEBUG
 				"  -D                Debug info\n"
 			#endif
@@ -2832,19 +2836,21 @@ static PHP_FUNCTION(ts_var_declare) {
 ZEND_BEGIN_ARG_INFO(arginfo_ts_var_fd, 1)
 ZEND_ARG_TYPE_INFO(0, res, IS_RESOURCE, 0)
 ZEND_ARG_TYPE_INFO(0, is_write, _IS_BOOL, 0)
+ZEND_ARG_TYPE_INFO(0, is_auto, _IS_BOOL, 1)
 ZEND_END_ARG_INFO()
 
 static PHP_FUNCTION(ts_var_fd) {
 	zval *zv;
-	zend_bool is_write = 0;
+	zend_bool is_write = 0, is_auto = 1;
 	
 	ts_hash_table_t *ts_ht;
 	php_shutdown_function_entry shutdown_function_entry;
 
-	ZEND_PARSE_PARAMETERS_START(1, 2)
+	ZEND_PARSE_PARAMETERS_START(1, 3)
 		Z_PARAM_RESOURCE(zv)
 		Z_PARAM_OPTIONAL
 		Z_PARAM_BOOL(is_write)
+		Z_PARAM_BOOL(is_auto)
 	ZEND_PARSE_PARAMETERS_END();
 	
 	if ((ts_ht = (ts_hash_table_t *) zend_fetch_resource_ex(zv, PHP_TS_VAR_DESCRIPTOR, le_ts_var_descriptor)) == NULL) {
@@ -2857,7 +2863,7 @@ static PHP_FUNCTION(ts_var_fd) {
 		socket_import_fd(ts_ht->fds[0], return_value);
 	}
 	
-	if(Z_TYPE_P(return_value) != IS_FALSE) {
+	if(is_auto && Z_TYPE_P(return_value) != IS_FALSE) {
 		shutdown_function_entry.arg_count = 2;
 		shutdown_function_entry.arguments = (zval *) safe_emalloc(sizeof(zval), shutdown_function_entry.arg_count, 0);
 		ZVAL_STRING(&shutdown_function_entry.arguments[0], "ts_var_fd_close");
@@ -3752,8 +3758,7 @@ static void on_close() {
 	dprintf("%s\n", __func__);
 }
 
-static zend_bool create_thread(void*(*handler)(void*), void* arg) {
-	pthread_t thread;
+static zend_bool create_thread(pthread_t *thread, zend_bool joinable, void*(*handler)(void*), void* arg) {
 	pthread_attr_t attr;
 	int ret;
 #ifdef THREADFPM_DEBUG
@@ -3767,8 +3772,8 @@ static zend_bool create_thread(void*(*handler)(void*), void* arg) {
 #endif
 	
 	pthread_attr_init(&attr);
-	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-	ret = pthread_create(&thread, &attr, handler, arg);
+	pthread_attr_setdetachstate(&attr, joinable ? PTHREAD_CREATE_JOINABLE : PTHREAD_CREATE_DETACHED);
+	ret = pthread_create(thread, &attr, handler, arg);
 	if(ret) {
 		errno = ret;
 		perror("pthread_create() is error");
@@ -3782,6 +3787,7 @@ static zend_bool create_thread(void*(*handler)(void*), void* arg) {
 }
 
 static void *thread_accept(void*_i) {
+	pthread_t thread;
 	thread_arg_t *arg;
 	char name[32];
 
@@ -3853,7 +3859,7 @@ static void *thread_accept(void*_i) {
 			nthreads++;
 			pthread_mutex_unlock(&lock);
 			
-			if(!create_thread(thread_request, NULL)) {
+			if(!create_thread(&thread, 0, thread_request, NULL)) {
 				pthread_mutex_lock(&lock);
 				nthreads--;
 				pthread_mutex_unlock(&lock);
@@ -3870,6 +3876,41 @@ static void *thread_accept(void*_i) {
 	pthread_cond_signal(&cond);
 	pthread_mutex_unlock(&lock);
 
+	pthread_exit(NULL);
+}
+
+static void* thread_phpfile(void *phpfile) {
+	char name[32] = "phpfile";
+
+	prctl(PR_SET_NAME, (unsigned long) name);
+
+	ts_resource(0);
+
+	SG(server_context) = NULL;
+	if (UNEXPECTED(php_request_startup() == SUCCESS)) {
+		SG(headers_sent) = 1;
+		zend_first_try {
+			zend_file_handle file_handle;
+			zend_bool orig_display_errors = PG(display_errors);
+			
+			PG(display_errors) = 0;
+			if (zend_stream_open(phpfile, &file_handle) == FAILURE) {
+				PG(display_errors) = orig_display_errors;
+				goto end;
+			}
+			PG(display_errors) = orig_display_errors;
+
+			SG(request_info).path_translated = phpfile;
+
+			php_output_end_all();
+			php_execute_script(&file_handle);
+		} zend_end_try();
+
+	end:
+		php_request_shutdown((void *) 0);
+	}
+	
+	ts_free_thread();
 	pthread_exit(NULL);
 }
 
@@ -3921,6 +3962,9 @@ int main(int argc, char *argv[])
 	struct timespec timeout;
 
 	char *pidfile = NULL;
+	
+	char *phpfile = NULL;
+	pthread_t phptid;
 
 	unsigned int reqs, nreqs, threads, accepts, nwaits;
 	unsigned long int max_reqs = 0;
@@ -4101,6 +4145,10 @@ int main(int argc, char *argv[])
 
 			case 'b':
 				backlog = atoi(php_optarg);
+				break;
+
+			case 'f':
+				phpfile = php_optarg;
 				break;
 
 		#ifdef THREADFPM_DEBUG
@@ -4288,11 +4336,16 @@ consult the installation file that came with this distribution, or visit \n\
 	tail_wait->next = NULL;
 
 	for(ret=0; ret<max_accepts; ret++) {
-		create_thread(thread_accept, NULL + ret);
+		pthread_t tid;
+		create_thread(&tid, 0, thread_accept, NULL + ret);
 	}
 	
 	fprintf(stderr, "[%s] The server running for listen %s backlog %d\n", gettimeofstr(), path, backlog);
 	fflush(stderr);
+	
+	if(phpfile) {
+		create_thread(&phptid, 1, thread_phpfile, phpfile);
+	}
 	
 	memset(reqv, 0, sizeof(reqv));
 
@@ -4374,6 +4427,11 @@ consult the installation file that came with this distribution, or visit \n\
 	pthread_mutex_destroy(&wlock);
 	pthread_mutex_destroy(&lock);
 	sem_destroy(&rsem);
+	
+	if(phpfile) {
+		pthread_kill(phptid, SIGINT);
+		pthread_join(phptid, NULL);
+	}
 
 	if(isReload) {
 		fprintf(stderr, "[%s] The server reloading\n", gettimeofstr());
