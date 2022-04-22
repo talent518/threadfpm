@@ -31,7 +31,7 @@ $line2 = str_repeat('=', N);
 $nlog = (int) @file_get_contents(LOG_IDX);
 
 echo "phpfile begin\n";
-while($running) {
+while($running || ts_var_count($logVar)) {
 	$reads = [$logFd];
 	$writes = $excepts = [];
 	if(!@socket_select($reads, $writes, $excepts, 1)) {
