@@ -3839,10 +3839,7 @@ static void* thread_phpfile(void *phpfile) {
 			zend_bool orig_display_errors = PG(display_errors);
 			
 			PG(display_errors) = 0;
-			if (zend_stream_open(phpfile, &file_handle) == FAILURE) {
-				PG(display_errors) = orig_display_errors;
-				goto end;
-			}
+			zend_stream_init_filename(&file_handle, phpfile);
 			PG(display_errors) = orig_display_errors;
 
 			SG(request_info).path_translated = phpfile;
@@ -3851,7 +3848,6 @@ static void* thread_phpfile(void *phpfile) {
 			php_execute_script(&file_handle);
 		} zend_end_try();
 
-	end:
 		php_request_shutdown((void *) 0);
 	}
 	
