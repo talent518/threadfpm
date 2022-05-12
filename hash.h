@@ -172,6 +172,7 @@ typedef int (*hash_compare_func_t)(const bucket_t *a, const bucket_t *b);
 int compare_key(const bucket_t *a, const bucket_t *b);
 int compare_value(const bucket_t *a, const bucket_t *b);
 int hash_table_minmax(const hash_table_t *ht, hash_compare_func_t compar, int flag, bucket_t **ret);
+int hash_table_sort(hash_table_t *ht, hash_compare_func_t compar, int reverse);
 
 // ===========================================================================================================
 
