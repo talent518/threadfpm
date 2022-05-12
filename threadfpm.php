@@ -68,7 +68,7 @@ while($running || ts_var_count($logVar)) {
 	if(ftell($fp) > LOG_SIZE) {
 		fclose($fp);
 		$nlog++;
-		if($nlog > 50) {
+		if($nlog > N) {
 			$nlog = 1;
 		}
 		file_put_contents(LOG_IDX, $nlog);
