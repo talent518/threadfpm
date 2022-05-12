@@ -19,6 +19,9 @@
 
 /* $Id$ */
 
+#define _GNU_SOURCE
+#include <stdlib.h>
+
 #include <limits.h>
 
 #include "hash.h"
@@ -670,10 +673,10 @@ int compare_key(const bucket_t *a, const bucket_t *b) {
 				return 0;
 			}
 		} else {
-			return 1;
+			return -1;
 		}
 	} else if(b->nKeyLength == 0) {
-		return -1;
+		return 1;
 	} else {
 		return strcmp(a->arKey, b->arKey);
 	}
@@ -741,6 +744,59 @@ int hash_table_minmax(const hash_table_t *ht, hash_compare_func_t compar, int fl
 	}
 	*ret = (bucket_t*) res;
 	return SUCCESS;
+}
+
+static int qsort_compare(const void *a, const void *b, void *c) {
+    hash_compare_func_t compar = * (hash_compare_func_t*) c;
+
+    return compar(* (const bucket_t**) a, * (const bucket_t**) b);
+}
+
+static int qsort_compare_reverse(const void *a, const void *b, void *c) {
+    hash_compare_func_t compar = * (hash_compare_func_t*) c;
+
+    return - compar(* (const bucket_t**) a, * (const bucket_t**) b);
+}
+
+int hash_table_sort(hash_table_t *ht, hash_compare_func_t compar, int reverse) {
+    bucket_t **arTmp;
+    bucket_t *p;
+    int n, j;
+
+    if (!(ht->nNumOfElements>1)) { /* Doesn't require sorting */
+        return SUCCESS;
+    }
+
+    arTmp = (bucket_t **) malloc(ht->nNumOfElements * sizeof(bucket_t *));
+    p = ht->pListHead;
+    n = 0;
+    while (p) {
+        arTmp[n] = p;
+        p = p->pListNext;
+        n++;
+    }
+    qsort_r((void *) arTmp, n, sizeof(bucket_t *), reverse ? qsort_compare_reverse : qsort_compare, &compar);
+
+    ht->pListHead = arTmp[0];
+    ht->pListTail = NULL;
+
+    arTmp[0]->pListLast = NULL;
+    if (n > 1) {
+        arTmp[0]->pListNext = arTmp[1];
+        for (j = 1; j < n-1; j++) {
+            arTmp[j]->pListLast = arTmp[j-1];
+            arTmp[j]->pListNext = arTmp[j+1];
+        }
+        arTmp[j]->pListLast = arTmp[j-1];
+        arTmp[j]->pListNext = NULL;
+    } else {
+        arTmp[0]->pListNext = NULL;
+    }
+    ht->pListTail = arTmp[n-1];
+
+    free(arTmp);
+
+    return SUCCESS;
 }
 
 /*
