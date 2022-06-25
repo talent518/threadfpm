@@ -2173,7 +2173,7 @@ static void value_add(value_t *dst, value_t *src) {
 	} else {
 		switch(src->type) {
 			case NULL_T:
-				src->b = 0;
+				break;
 			case BOOL_T:
 				VALUE_ADD(b,l,LONG_T);
 				break;
