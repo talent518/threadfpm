@@ -3785,7 +3785,7 @@ static void *thread_request(void*_) {
 		CGIG(body_fd) = -2;
 
 		if (UNEXPECTED(EG(exit_status) == 255)) {
-			if (CGIG(error_header) && *CGIG(error_header)) {
+			if (CGIG(error_header) && *CGIG(error_header) && !SG(headers_sent)) {
 				sapi_header_line ctr = {0};
 
 				ctr.line = CGIG(error_header);
