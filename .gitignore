@@ -5,3 +5,4 @@ threadfpm
 .libs
 *.log
 *.idx
+*.dep
