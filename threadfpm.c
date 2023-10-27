@@ -294,7 +294,7 @@ static void user_config_cache_entry_dtor(zval *el)
 static int php_cgi_globals_id;
 #define CGIG(v) ZEND_TSRMG(php_cgi_globals_id, php_cgi_globals_struct *, v)
 
-const char *gettimeofstr() {
+const char *gettimeofstr(void) {
 	time_t t;
 	struct tm *tmp;
 
@@ -907,10 +907,7 @@ static int sapi_cgi_deactivate(void) /* {{{ */
 
 static int php_cgi_startup(sapi_module_struct *sapi_module) /* {{{ */
 {
-	if (php_module_startup(sapi_module, &cgi_module_entry, 1) == FAILURE) {
-		return FAILURE;
-	}
-	return SUCCESS;
+	return php_module_startup(sapi_module, &cgi_module_entry, 1);
 }
 /* }}} */
 
@@ -1305,11 +1302,31 @@ static void init_request_info(void)
 									 * As we can extract PATH_INFO from PATH_TRANSLATED
 									 * it is probably also in SCRIPT_NAME and need to be removed
 									 */
-									int snlen = strlen(env_script_name);
-									if (snlen>slen && !strcmp(env_script_name+snlen-slen, path_info)) {
+									char *decoded_path_info = NULL;
+									size_t decoded_path_info_len = 0;
+									if (strchr(path_info, '%')) {
+										decoded_path_info = estrdup(path_info);
+										decoded_path_info_len = php_url_decode(decoded_path_info, strlen(path_info));
+									}
+									size_t snlen = strlen(env_script_name);
+									size_t env_script_file_info_start = 0;
+									if (
+										(
+											snlen > slen &&
+											!strcmp(env_script_name + (env_script_file_info_start = snlen - slen), path_info)
+										) ||
+										(
+											decoded_path_info &&
+											snlen > decoded_path_info_len &&
+											!strcmp(env_script_name + (env_script_file_info_start = snlen - decoded_path_info_len), decoded_path_info)
+										)
+									) {
 										FCGI_PUTENV(request, "ORIG_SCRIPT_NAME", orig_script_name);
-										env_script_name[snlen-slen] = 0;
-										request_info->request_uri = FCGI_PUTENV(request, "SCRIPT_NAME", env_script_name);
+										env_script_name[env_script_file_info_start] = 0;
+										SG(request_info).request_uri = FCGI_PUTENV(request, "SCRIPT_NAME", env_script_name);
+									}
+									if (decoded_path_info) {
+										efree(decoded_path_info);
 									}
 								}
 								env_path_info = FCGI_PUTENV(request, "PATH_INFO", path_info);
@@ -1696,7 +1713,7 @@ ZEND_END_ARG_INFO()
 		PHP_VAR_UNSERIALIZE_DESTROY(var_hash); \
 	} while(0)
 
-static void share_var_init()
+static void share_var_init(void)
 {
 	pthread_mutex_init(&share_var_rlock, NULL);
 	pthread_mutex_init(&share_var_wlock, NULL);
@@ -2519,7 +2536,7 @@ static int hash_table_clean_ex(bucket_t *p, int *ex) {
 	return HASH_TABLE_APPLY_KEEP;
 }
 
-static int share_var_clean_ex()
+static int share_var_clean_ex(void)
 {
 	int n;
 
@@ -2532,7 +2549,7 @@ static int share_var_clean_ex()
 	return n;
 }
 
-static void share_var_destory()
+static void share_var_destory(void)
 {
 	pthread_mutex_destroy(&share_var_rlock);
 	pthread_mutex_destroy(&share_var_wlock);
@@ -2730,7 +2747,7 @@ void value_to_zval_wr(value_t *v, zval *return_value) {
 
 static ts_hash_table_t ts_var;
 
-int ts_var_clean_ex() {
+int ts_var_clean_ex(void) {
 	int n;
 
 	ts_hash_table_wr_lock(&ts_var);
@@ -3607,7 +3624,7 @@ static zend_module_entry cgi_module_entry = {
 
 #define MICRO_IN_SEC 1000000.00
 
-double microtime() {
+double microtime(void) {
 	struct timeval tp = {0};
 
 	if (gettimeofday(&tp, NULL)) {
@@ -3617,7 +3634,7 @@ double microtime() {
 	return (double)(tp.tv_sec + tp.tv_usec / MICRO_IN_SEC) * 1000;
 }
 
-void thread_sigmask() {
+void thread_sigmask(void) {
 	register int sig;
 	sigset_t set;
 
@@ -3848,17 +3865,17 @@ static void *thread_request(void*_) {
 	pthread_exit(NULL);
 }
 
-static void on_accept() {
+static void on_accept(void) {
 	if(CGIG(is_accept) == 0) zend_bailout();
 
 	dprintf("%s\n", __func__);
 }
 
-static void on_read() {
+static void on_read(void) {
 	dprintf("%s\n", __func__);
 }
 
-static void on_close() {
+static void on_close(void) {
 	dprintf("%s\n", __func__);
 }
 
@@ -3895,7 +3912,7 @@ static void *thread_accept(void*_i) {
 	thread_arg_t *arg;
 	char name[32];
 
-	snprintf(name, sizeof(name), "accept%d", (int)_i);
+	snprintf(name, sizeof(name), "accept%d", *(int*)&_i);
 	prctl(PR_SET_NAME, (unsigned long) name);
 	
 	pthread_mutex_lock(&lock);
