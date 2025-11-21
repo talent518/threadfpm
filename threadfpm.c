@@ -2860,7 +2860,6 @@ static PHP_FUNCTION(ts_var_fd) {
 	zend_bool is_write = 0, is_auto = 1;
 	
 	ts_hash_table_t *ts_ht;
-	php_shutdown_function_entry shutdown_function_entry;
 
 	ZEND_PARSE_PARAMETERS_START(1, 3)
 		Z_PARAM_RESOURCE(zv)
@@ -2880,20 +2879,23 @@ static PHP_FUNCTION(ts_var_fd) {
 	}
 	
 	if(is_auto && Z_TYPE_P(return_value) != IS_FALSE) {
-		zval callable;
-		ZVAL_STRING(&callable, "ts_var_fd_close");
-		zend_fcall_info_init(&callable, 0, &shutdown_function_entry.fci, &shutdown_function_entry.fci_cache, NULL, NULL);
-		zend_release_fcall_info_cache(&shutdown_function_entry.fci_cache);
-		shutdown_function_entry.fci.param_count = 1;
-		shutdown_function_entry.fci.params = (zval *) safe_emalloc(sizeof(zval), shutdown_function_entry.fci.param_count, 0);
-		ZVAL_ZVAL(&shutdown_function_entry.fci.params[0], return_value, 1, 0);
+		php_shutdown_function_entry shutdown_function_entry = {
+			.fci_cache = empty_fcall_info_cache,
+			.params = NULL, 
+			.param_count = 0,
+		};
+		zend_function *fn_entry = zend_hash_str_find_ptr(CG(function_table), ZEND_STRL("ts_var_fd_close"));
+		shutdown_function_entry.fci_cache.function_handler = fn_entry;
+
+		shutdown_function_entry.param_count = 1;
+		shutdown_function_entry.params = (zval *) safe_emalloc(sizeof(zval), shutdown_function_entry.param_count, 0);
+		ZVAL_ZVAL(&shutdown_function_entry.params[0], return_value, 1, 0);
 		
 		if(!append_user_shutdown_function(&shutdown_function_entry)) {
 			fprintf(stderr, "append user shutdown function failure\n");
 
-			zval_ptr_dtor(&callable);
-			zval_ptr_dtor(&shutdown_function_entry.fci.params[0]);
-			efree(shutdown_function_entry.fci.params);
+			zval_ptr_dtor(&shutdown_function_entry.params[0]);
+			efree(shutdown_function_entry.params);
 		}
 	}
 }
